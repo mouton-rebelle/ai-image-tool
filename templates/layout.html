@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{.Title}}</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/masonry-layout@4/dist/masonry.pkgd.min.js"></script>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{.Title}}</h1>
+            <form class="search-form" hx-get="/search" hx-target="#image-results" hx-trigger="submit, keyup changed delay:500ms from:input[name='q']" hx-swap="innerHTML">
+                <input type="text" class="search-input" name="q" placeholder="Search by model, prompt keywords...">
+                <input type="hidden" name="nsfw" id="nsfw-filter" value="sfw">
+                <input type="hidden" name="page" value="1">
+                <button type="submit" class="search-btn">Search</button>
+            </form>
+            
+            <div class="filter-buttons">
+                <button class="filter-btn" onclick="setNSFWFilter('all')">All</button>
+                <button class="filter-btn active" onclick="setNSFWFilter('sfw')">SFW Only</button>
+                <button class="filter-btn" onclick="setNSFWFilter('nsfw')">NSFW Only</button>
+            </div>
+        </div>
+        
+        <div id="image-results" hx-get="/api/images?page=1&nsfw=sfw" hx-trigger="load">
+            <div class="loading">Loading images...</div>
+        </div>
+        
+        <div id="load-more" style="display: none;" hx-target="#pages-container" hx-swap="beforeend" 
+             hx-trigger="intersect once" hx-indicator=".loading">
+            <div class="loading">Loading more images...</div>
+        </div>
+    </div>
+    
+    <!-- Lightbox -->
+    <div id="lightbox" class="lightbox">
+        <span class="lightbox-close">&times;</span>
+        <span class="lightbox-prev">&#10094;</span>
+        <span class="lightbox-next">&#10095;</span>
+        <div class="lightbox-content">
+            <img id="lightbox-img" src="" alt="">
+            <div class="lightbox-metadata">
+                <h3 id="lightbox-model"></h3>
+                <div class="lightbox-params">
+                    <span id="lightbox-steps"></span>
+                    <span id="lightbox-cfg"></span>
+                    <span id="lightbox-sampler"></span>
+                    <span id="lightbox-scheduler"></span>
+                </div>
+                <div class="lightbox-seed-section">
+                    <strong>Seed:</strong>
+                    <div class="seed-container">
+                        <span id="lightbox-seed"></span>
+                        <button class="seed-copy-btn" onclick="copyLightboxSeed()" title="Copy seed">Copy</button>
+                    </div>
+                </div>
+                <div class="lightbox-prompts">
+                    <div class="lightbox-prompt-section">
+                        <strong>Prompt:</strong>
+                        <p id="lightbox-prompt"></p>
+                    </div>
+                    <div class="lightbox-prompt-section" id="lightbox-neg-section">
+                        <strong>Negative Prompt:</strong>
+                        <p id="lightbox-neg-prompt"></p>
+                    </div>
+                </div>
+                <button class="lightbox-copy-btn" onclick="copyLightboxPrompt()">Copy Prompt</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    function setNSFWFilter(filter) {
+        // Update hidden input
+        document.getElementById('nsfw-filter').value = filter;
+        
+        // Update active button
+        document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+        event.target.classList.add('active');
+        
+        // Update current search parameters and reset page
+        window.currentNSFWFilter = filter;
+        window.currentPage = 1; // Reset to page 1
+        
+        // Trigger search with new filter
+        const searchInput = document.querySelector('.search-input');
+        const searchValue = searchInput.value;
+        
+        let url;
+        if (searchValue.trim() === '') {
+            // No search query, just filter
+            if (filter === 'all') {
+                url = '/api/images?page=1';
+            } else {
+                url = `/api/images?page=1&nsfw=${filter}`;
+            }
+        } else {
+            // Has search query
+            if (filter === 'all') {
+                url = `/search?q=${encodeURIComponent(searchValue)}&page=1`;
+            } else {
+                url = `/search?q=${encodeURIComponent(searchValue)}&nsfw=${filter}&page=1`;
+            }
+        }
+        
+        // Reset and update the request
+        const imageResults = document.getElementById('image-results');
+        const loadMore = document.getElementById('load-more');
+        
+        // Clear existing content immediately
+        imageResults.innerHTML = '<div class="loading">Loading images...</div>';
+        
+        // Hide load more temporarily
+        if (loadMore) {
+            loadMore.style.display = 'none';
+        }
+        
+        // Make the HTMX request directly
+        htmx.ajax('GET', url, {
+            target: '#image-results',
+            swap: 'innerHTML'
+        });
+    }
+    
+    // Initialize filter state
+    window.currentNSFWFilter = 'sfw';
+    
+    // Toggle filter visibility with Ctrl+D
+    document.addEventListener('keydown', function(event) {
+        if (event.ctrlKey && event.key === 'd') {
+            event.preventDefault();
+            const filterButtons = document.querySelector('.filter-buttons');
+            filterButtons.classList.toggle('visible');
+        }
+    });
+    
+    // Update hidden NSFW field before each search request
+    document.addEventListener('htmx:configRequest', function(event) {
+        if (event.detail.path.includes('/search') || event.detail.path.includes('/api/images')) {
+            // Update the hidden nsfw field to current filter state
+            const nsfwField = document.getElementById('nsfw-filter');
+            if (nsfwField && window.currentNSFWFilter) {
+                nsfwField.value = window.currentNSFWFilter;
+            }
+        }
+    });
+    
+    
+    // Lightbox functionality
+    window.currentLightboxIndex = 0;
+    window.lightboxImages = [];
+    window.lightboxMetadata = [];
+    
+    // Function to decode HTML entities
+    window.decodeHtmlEntities = function(text) {
+        const textarea = document.createElement('textarea');
+        textarea.innerHTML = text;
+        return textarea.value;
+    };
+    
+    window.buildLightboxImageList = function() {
+        const imageCards = document.querySelectorAll('.image-card a');
+        window.lightboxImages = Array.from(imageCards).map(link => link.href);
+        // Extract metadata from data attributes
+        window.lightboxMetadata = Array.from(imageCards).map(link => {
+            return {
+                src: link.href,
+                id: link.getAttribute('data-image-id'),
+                model: window.decodeHtmlEntities(link.getAttribute('data-model') || ''),
+                steps: link.getAttribute('data-steps') || '',
+                cfg: link.getAttribute('data-cfg') || '',
+                sampler: window.decodeHtmlEntities(link.getAttribute('data-sampler') || ''),
+                scheduler: window.decodeHtmlEntities(link.getAttribute('data-scheduler') || ''),
+                seed: link.getAttribute('data-seed') || '',
+                prompt: window.decodeHtmlEntities(link.getAttribute('data-prompt') || ''),
+                negPrompt: window.decodeHtmlEntities(link.getAttribute('data-neg-prompt') || '')
+            };
+        });
+    };
+    
+    window.openLightboxFromData = function(element, imageSrc) {
+        const model = window.decodeHtmlEntities(element.getAttribute('data-model') || '');
+        const steps = element.getAttribute('data-steps') || '';
+        const cfg = element.getAttribute('data-cfg') || '';
+        const sampler = window.decodeHtmlEntities(element.getAttribute('data-sampler') || '');
+        const scheduler = window.decodeHtmlEntities(element.getAttribute('data-scheduler') || '');
+        const seed = element.getAttribute('data-seed') || '';
+        const prompt = window.decodeHtmlEntities(element.getAttribute('data-prompt') || '');
+        const negPrompt = window.decodeHtmlEntities(element.getAttribute('data-neg-prompt') || '');
+        
+        window.openLightbox(imageSrc, element.getAttribute('data-image-id'), model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt);
+    };
+    
+    window.openLightbox = function(imageSrc, id, model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt) {
+        // Build/update the image list
+        window.buildLightboxImageList();
+        
+        // Find current image index
+        window.currentLightboxIndex = window.lightboxImages.findIndex(img => img === imageSrc);
+        if (window.currentLightboxIndex === -1) {
+            window.currentLightboxIndex = 0;
+        }
+        
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImg = document.getElementById('lightbox-img');
+        lightboxImg.src = imageSrc;
+        
+        // Populate metadata
+        window.populateLightboxMetadata(model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt);
+        
+        lightbox.classList.add('active');
+        
+        // Prevent body scroll
+        document.body.style.overflow = 'hidden';
+        
+        // Update arrow visibility
+        window.updateArrowVisibility();
+    };
+    
+    window.populateLightboxMetadata = function(model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt) {
+        // Clean model name - remove .safetensors extension
+        let cleanModel = model || 'Unknown Model';
+        if (cleanModel.endsWith('.safetensors')) {
+            cleanModel = cleanModel.slice(0, -12); // Remove ".safetensors"
+        }
+        const modelElement = document.getElementById('lightbox-model');
+        modelElement.textContent = cleanModel;
+        modelElement.title = model || 'Unknown Model'; // Show full name on hover
+        
+        // Parameters
+        document.getElementById('lightbox-steps').textContent = steps ? `Steps: ${steps}` : '';
+        document.getElementById('lightbox-cfg').textContent = cfg ? `CFG: ${cfg}` : '';
+        document.getElementById('lightbox-sampler').textContent = sampler ? `Sampler: ${sampler}` : '';
+        document.getElementById('lightbox-scheduler').textContent = scheduler ? `Scheduler: ${scheduler}` : '';
+        
+        // Seed
+        document.getElementById('lightbox-seed').textContent = seed || 'N/A';
+        
+        // Prompts
+        document.getElementById('lightbox-prompt').textContent = prompt || 'No prompt available';
+        
+        const negSection = document.getElementById('lightbox-neg-section');
+        const negPromptEl = document.getElementById('lightbox-neg-prompt');
+        if (negPrompt && negPrompt.trim()) {
+            negPromptEl.textContent = negPrompt;
+            negSection.style.display = 'block';
+        } else {
+            negSection.style.display = 'none';
+        }
+        
+        // Store current data for copying
+        window.currentPromptData = { prompt: prompt || '', negPrompt: negPrompt || '' };
+        window.currentSeed = seed || '';
+    };
+    
+    window.closeLightbox = function() {
+        const lightbox = document.getElementById('lightbox');
+        lightbox.classList.remove('active');
+        
+        // Restore body scroll
+        document.body.style.overflow = '';
+    };
+    
+    window.showPrevImage = function() {
+        if (window.currentLightboxIndex > 0) {
+            window.currentLightboxIndex--;
+            const lightboxImg = document.getElementById('lightbox-img');
+            lightboxImg.src = window.lightboxImages[window.currentLightboxIndex];
+            
+            // Update metadata for current image
+            const metadata = window.lightboxMetadata[window.currentLightboxIndex];
+            if (metadata) {
+                window.populateLightboxMetadata(metadata.model, metadata.steps, metadata.cfg, metadata.sampler, metadata.scheduler, metadata.seed, metadata.prompt, metadata.negPrompt);
+            }
+            
+            window.updateArrowVisibility();
+        }
+    };
+    
+    window.showNextImage = function() {
+        if (window.currentLightboxIndex < window.lightboxImages.length - 1) {
+            window.currentLightboxIndex++;
+            const lightboxImg = document.getElementById('lightbox-img');
+            lightboxImg.src = window.lightboxImages[window.currentLightboxIndex];
+            
+            // Update metadata for current image
+            const metadata = window.lightboxMetadata[window.currentLightboxIndex];
+            if (metadata) {
+                window.populateLightboxMetadata(metadata.model, metadata.steps, metadata.cfg, metadata.sampler, metadata.scheduler, metadata.seed, metadata.prompt, metadata.negPrompt);
+            }
+            
+            window.updateArrowVisibility();
+        }
+    };
+    
+    window.copyLightboxPrompt = function() {
+        if (!window.currentPromptData) return;
+        
+        let fullPrompt = window.currentPromptData.prompt;
+        if (window.currentPromptData.negPrompt && window.currentPromptData.negPrompt.trim() !== '') {
+            fullPrompt += '\n\nNegative prompt: ' + window.currentPromptData.negPrompt;
+        }
+        
+        navigator.clipboard.writeText(fullPrompt).then(function() {
+            // Show feedback
+            const button = document.querySelector('.lightbox-copy-btn');
+            const originalText = button.innerHTML;
+            button.innerHTML = 'Copied!';
+            button.style.backgroundColor = '#28a745';
+            
+            setTimeout(function() {
+                button.innerHTML = originalText;
+                button.style.backgroundColor = '#007bff';
+            }, 2000);
+        }).catch(function(err) {
+            console.error('Failed to copy prompt: ', err);
+            alert('Failed to copy prompt to clipboard');
+        });
+    };
+    
+    window.copyLightboxSeed = function() {
+        if (!window.currentSeed) return;
+        
+        navigator.clipboard.writeText(window.currentSeed).then(function() {
+            // Show feedback
+            const button = document.querySelector('.seed-copy-btn');
+            const originalText = button.innerHTML;
+            button.innerHTML = 'Copied!';
+            button.style.backgroundColor = '#28a745';
+            
+            setTimeout(function() {
+                button.innerHTML = originalText;
+                button.style.backgroundColor = '#007bff';
+            }, 2000);
+        }).catch(function(err) {
+            console.error('Failed to copy seed: ', err);
+            alert('Failed to copy seed to clipboard');
+        });
+    };
+    
+    window.updateArrowVisibility = function() {
+        const prevBtn = document.querySelector('.lightbox-prev');
+        const nextBtn = document.querySelector('.lightbox-next');
+        
+        prevBtn.style.opacity = window.currentLightboxIndex > 0 ? '1' : '0.3';
+        nextBtn.style.opacity = window.currentLightboxIndex < window.lightboxImages.length - 1 ? '1' : '0.3';
+        
+        prevBtn.style.cursor = window.currentLightboxIndex > 0 ? 'pointer' : 'default';
+        nextBtn.style.cursor = window.currentLightboxIndex < window.lightboxImages.length - 1 ? 'pointer' : 'default';
+    };
+    
+    // Close lightbox on click outside image
+    document.getElementById('lightbox').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeLightbox();
+        }
+    });
+    
+    // Close lightbox with X button
+    document.querySelector('.lightbox-close').addEventListener('click', function() {
+        closeLightbox();
+    });
+    
+    // Previous image button
+    document.querySelector('.lightbox-prev').addEventListener('click', function() {
+        showPrevImage();
+    });
+    
+    // Next image button
+    document.querySelector('.lightbox-next').addEventListener('click', function() {
+        showNextImage();
+    });
+    
+    // Keyboard navigation
+    document.addEventListener('keydown', function(e) {
+        const lightbox = document.getElementById('lightbox');
+        if (lightbox.classList.contains('active')) {
+            switch(e.key) {
+                case 'Escape':
+                    closeLightbox();
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    showPrevImage();
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    showNextImage();
+                    break;
+            }
+        }
+    });
+    </script>
+</body>
+</html>

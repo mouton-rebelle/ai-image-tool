@@ -1,0 +1,47 @@
+# Generated and imported files
+images/
+images_nsfw/
+thumbnails/
+*.db
+*.db-shm
+*.db-wal
+
+# Generated output files
+prompts_nsfw.txt
+prompts_sfw.txt
+
+# Go build artifacts
+civitai-viewer
+go.sum
+tmp
+
+# Deno cache and generated files
+.deno/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+.claude
+# Environment files (optional - uncomment if you store secrets)
+# .env
+# .env.local

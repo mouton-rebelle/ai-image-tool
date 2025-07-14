@@ -1,0 +1,278 @@
+{{if eq .CurrentPage 1}}
+<div class="pages-container" id="pages-container">
+<div class="image-grid page-grid" id="page-{{.CurrentPage}}" data-page="{{.CurrentPage}}">
+{{range .Images}}
+    <div class="image-card">
+        <a href="{{if .IsNSFW}}/images_nsfw/{{else}}/images/{{end}}{{.Filename}}" 
+           data-image-id="{{.ID}}"
+           data-model="{{.Model}}"
+           data-steps="{{.Steps}}"
+           data-cfg="{{printf "%.1f" .CFGScale}}"
+           data-sampler="{{.Sampler}}"
+           data-scheduler="{{.Scheduler}}"
+           data-seed="{{.Seed}}"
+           data-prompt="{{.Prompt}}"
+           data-neg-prompt="{{.NegPrompt}}"
+           onclick="event.preventDefault(); openLightboxFromData(this, '{{if .IsNSFW}}/images_nsfw/{{else}}/images/{{end}}{{.Filename}}'); return false;">
+            <img src="/thumbnails/{{.Filename}}" alt="Image {{.ID}}">
+        </a>
+    </div>
+{{end}}
+</div>
+</div>
+
+<script>
+window.currentPage = {{.CurrentPage}};
+window.hasMore = {{.HasNext}};
+window.currentSearch = "{{.SearchQuery}}";
+
+// Initialize Masonry for the current page
+if (window.Masonry) {
+    const pageGrid = document.getElementById('page-{{.CurrentPage}}');
+    if (pageGrid) {
+        // Wait for images to load before initializing masonry
+        const images = pageGrid.querySelectorAll('img');
+        let loadedCount = 0;
+        const totalImages = images.length;
+        
+        function initMasonry() {
+            // Get responsive column width based on screen size
+            function getColumnWidth() {
+                const columnCount = 4
+                const containerWidth = pageGrid.offsetWidth;
+                const width = (containerWidth - ((columnCount-1)*15)) / columnCount
+                console.log(width, containerWidth)
+            }
+            
+            const masonryInstance = new Masonry(pageGrid, {
+                itemSelector: '.image-card',
+                columnWidth: getColumnWidth(),
+                gutter: 15,
+                fitWidth: true,
+                horizontalOrder: true
+            });
+            
+            // Responsive resize handler
+            let resizeTimeout;
+            window.addEventListener('resize', function() {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(function() {
+                    masonryInstance.options.columnWidth = getColumnWidth();
+                    masonryInstance.layout();
+                }, 250);
+            });
+        }
+        
+        if (totalImages === 0) {
+            initMasonry();
+        } else {
+            images.forEach(img => {
+                if (img.complete) {
+                    loadedCount++;
+                    if (loadedCount === totalImages) {
+                        initMasonry();
+                    }
+                } else {
+                    img.addEventListener('load', () => {
+                        loadedCount++;
+                        if (loadedCount === totalImages) {
+                            initMasonry();
+                        }
+                    });
+                }
+            });
+        }
+    }
+}
+
+
+if (!window.updateLoadMore) {
+    window.updateLoadMore = function() {
+        const loadMore = document.getElementById('load-more');
+        if (loadMore && window.hasMore) {
+            const nextPage = window.currentPage + 1;
+            const searchParam = window.currentSearch ? `q=${encodeURIComponent(window.currentSearch)}&` : '';
+            const nsfwParam = window.currentNSFWFilter && window.currentNSFWFilter !== 'all' ? `nsfw=${window.currentNSFWFilter}&` : '';
+            const url = `/search?${searchParam}${nsfwParam}page=${nextPage}`;
+            
+            loadMore.setAttribute('hx-get', url);
+            loadMore.setAttribute('hx-trigger', 'intersect once');
+            loadMore.style.display = 'block';
+            
+            // Re-initialize HTMX for the updated element
+            htmx.process(loadMore);
+            
+            console.log('Load more updated for next page:', nextPage, 'URL:', url, 'Search:', window.currentSearch, 'NSFW:', window.currentNSFWFilter);
+        } else if (loadMore) {
+            loadMore.style.display = 'none';
+            console.log('No more pages to load');
+        }
+    };
+}
+
+// Update search functionality  
+document.addEventListener('htmx:afterRequest', function(event) {
+    if (event.detail.xhr.status === 200) {
+        const response = event.detail.xhr.responseText;
+        console.log('HTMX Request completed for:', event.detail.requestConfig.path);
+        
+        // Check if this is a new search (target is #image-results)
+        if (event.detail.target && event.detail.target.id === 'image-results') {
+            // Extract search query from the response
+            const searchMatch = response.match(/window\.currentSearch = "([^"]*)"/);
+            if (searchMatch) {
+                window.currentSearch = searchMatch[1];
+                console.log('Updated search query to:', window.currentSearch);
+            }
+            
+            // Reset page to 1 for new search
+            const pageMatch = response.match(/window\.currentPage = (\d+)/);
+            if (pageMatch) {
+                window.currentPage = parseInt(pageMatch[1]);
+                console.log('Reset page to:', window.currentPage);
+            }
+            
+            // Preserve current NSFW filter if not explicitly set in response
+            if (!window.currentNSFWFilter) {
+                window.currentNSFWFilter = 'all';
+            }
+            console.log('Current NSFW filter:', window.currentNSFWFilter);
+        }
+        
+        if (response.includes('window.hasMore')) {
+            // Only increment page if this is a load-more request (not initial search)
+            if (event.detail.target && event.detail.target.id === 'pages-container') {
+                window.currentPage++;
+                console.log('Load-more: Page incremented to:', window.currentPage);
+            }
+            
+            // Extract hasMore value from the response
+            const hasMoreMatch = response.match(/window\.hasMore = (true|false)/);
+            if (hasMoreMatch) {
+                window.hasMore = hasMoreMatch[1] === 'true';
+                console.log('hasMore:', window.hasMore);
+            }
+            
+            // Set up load more for next page
+            window.updateLoadMore();
+        }
+    }
+});
+
+// Handle HTMX errors
+document.addEventListener('htmx:responseError', function(event) {
+    console.error('HTMX Response Error:', event.detail);
+});
+
+document.addEventListener('htmx:targetError', function(event) {
+    console.error('HTMX Target Error:', event.detail);
+    // If target error, wait a bit and try to update load more
+    setTimeout(window.updateLoadMore, 100);
+});
+
+// Initialize load more (don't increment page on first setup)
+(function() {
+    const loadMore = document.getElementById('load-more');
+    if (loadMore && window.hasMore) {
+        const nextPage = window.currentPage + 1;
+        const searchParam = window.currentSearch ? `q=${encodeURIComponent(window.currentSearch)}&` : '';
+        const nsfwParam = window.currentNSFWFilter && window.currentNSFWFilter !== 'all' ? `nsfw=${window.currentNSFWFilter}&` : '';
+        const url = `/search?${searchParam}${nsfwParam}page=${nextPage}`;
+        
+        loadMore.setAttribute('hx-get', url);
+        loadMore.setAttribute('hx-trigger', 'intersect once');
+        loadMore.style.display = 'block';
+        htmx.process(loadMore);
+        
+        console.log('Initial load more setup for page:', nextPage, 'URL:', url, 'Search:', window.currentSearch, 'NSFW:', window.currentNSFWFilter);
+    } else if (loadMore) {
+        loadMore.style.display = 'none';
+    }
+})();
+</script>
+{{else}}
+<div class="image-grid page-grid" id="page-{{.CurrentPage}}" data-page="{{.CurrentPage}}">
+{{range .Images}}
+<div class="image-card">
+    <a href="{{if .IsNSFW}}/images_nsfw/{{else}}/images/{{end}}{{.Filename}}" 
+       data-image-id="{{.ID}}"
+       data-model="{{.Model}}"
+       data-steps="{{.Steps}}"
+       data-cfg="{{printf "%.1f" .CFGScale}}"
+       data-sampler="{{.Sampler}}"
+       data-scheduler="{{.Scheduler}}"
+       data-seed="{{.Seed}}"
+       data-prompt="{{.Prompt}}"
+       data-neg-prompt="{{.NegPrompt}}"
+       onclick="event.preventDefault(); openLightboxFromData(this, '{{if .IsNSFW}}/images_nsfw/{{else}}/images/{{end}}{{.Filename}}'); return false;">
+        <img src="/thumbnails/{{.Filename}}" alt="Image {{.ID}}">
+    </a>
+</div>
+{{end}}
+</div>
+<script>
+window.hasMore = {{.HasNext}};
+
+// Initialize Masonry for the current page
+if (window.Masonry) {
+    const pageGrid = document.getElementById('page-{{.CurrentPage}}');
+    if (pageGrid) {
+        // Wait for images to load before initializing masonry
+        const images = pageGrid.querySelectorAll('img');
+        let loadedCount = 0;
+        const totalImages = images.length;
+        
+        function initMasonry() {
+            // Get responsive column width based on screen size
+            function getColumnWidth() {
+                const containerWidth = pageGrid.offsetWidth;
+                if (window.innerWidth <= 600) return containerWidth; // 1 column
+                if (window.innerWidth <= 900) return containerWidth / 2; // 2 columns
+                if (window.innerWidth <= 1200) return containerWidth / 3; // 3 columns
+                return containerWidth / 4; // 4 columns
+            }
+            
+            const masonryInstance = new Masonry(pageGrid, {
+                itemSelector: '.image-card',
+                columnWidth: getColumnWidth(),
+                gutter: 15,
+                fitWidth: false,
+                horizontalOrder: true
+            });
+            
+            // Responsive resize handler
+            let resizeTimeout;
+            window.addEventListener('resize', function() {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(function() {
+                    masonryInstance.options.columnWidth = getColumnWidth();
+                    masonryInstance.layout();
+                }, 250);
+            });
+        }
+        
+        if (totalImages === 0) {
+            initMasonry();
+        } else {
+            images.forEach(img => {
+                if (img.complete) {
+                    loadedCount++;
+                    if (loadedCount === totalImages) {
+                        initMasonry();
+                    }
+                } else {
+                    img.addEventListener('load', () => {
+                        loadedCount++;
+                        if (loadedCount === totalImages) {
+                            initMasonry();
+                        }
+                    });
+                }
+            });
+        }
+    }
+}
+
+document.dispatchEvent(new CustomEvent('pageLoaded'));
+</script>
+{{end}}
