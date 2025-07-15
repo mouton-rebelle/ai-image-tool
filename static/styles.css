@@ -33,6 +33,12 @@ body {
     margin-bottom: 20px; 
 }
 
+.search-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
 .search-inputs {
     display: grid;
     grid-template-columns: 1fr 200px;
@@ -72,6 +78,28 @@ body {
 
 .search-btn:hover { 
     background: #0056b3; 
+}
+
+.clear-btn {
+    background: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 10px 12px;
+    font-size: 16px;
+    font-weight: bold;
+    transition: background-color 0.3s;
+}
+
+.clear-btn:hover:not(:disabled) {
+    background: #c82333;
+}
+
+.clear-btn:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+    opacity: 0.65;
 }
 
 /* Image grid - masonry layout */
@@ -318,45 +346,39 @@ body {
     font-size: 12px;
 }
 
-.lightbox-seed-section {
+.clickable-seed {
+    cursor: pointer;
+    transition: background-color 0.3s, color 0.3s;
+}
+
+.clickable-seed:hover {
+    background: rgba(255, 255, 255, 0.2) !important;
+}
+
+.lightbox-loras-section {
     margin-bottom: 20px;
 }
 
-.lightbox-seed-section strong {
+.lightbox-loras-section strong {
     display: block;
     margin-bottom: 8px;
     color: #fff;
 }
 
-.seed-container {
+.loras-container {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
-.seed-container span {
+.lora-item {
     background: rgba(255, 255, 255, 0.1);
-    padding: 6px 10px;
+    padding: 4px 8px;
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 12px;
     color: #ddd;
     font-family: monospace;
-    flex: 1;
-}
-
-.seed-copy-btn {
-    background: #007bff;
-    color: white;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 12px;
-    transition: background-color 0.3s;
-}
-
-.seed-copy-btn:hover {
-    background: #0056b3;
+    border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .lightbox-prompts {

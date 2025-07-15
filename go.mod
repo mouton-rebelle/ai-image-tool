@@ -1,4 +1,4 @@
-module civitai-viewer
+module ai-generated-image-viewer
 
 go 1.23.5
 

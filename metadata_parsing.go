@@ -3,11 +3,54 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+// extractLoRAs extracts LoRA information from text and returns cleaned text and LoRA data
+func extractLoRAs(text string) (string, []LoraData) {
+	// Regex to match LoRA patterns like <lora:name:weight>
+	loraRegex := regexp.MustCompile(`<lora:([^:]+):([^>]+)>`)
+	
+	var loras []LoraData
+	
+	// Find all LoRA matches
+	matches := loraRegex.FindAllStringSubmatch(text, -1)
+	for _, match := range matches {
+		if len(match) == 3 {
+			name := match[1]
+			weightStr := match[2]
+			
+			// Parse the weight as float
+			weight, err := strconv.ParseFloat(weightStr, 64)
+			if err != nil {
+				continue // Skip if can't parse weight
+			}
+			
+			// Round to 2 decimal places
+			roundedWeight := fmt.Sprintf("%.2f", weight)
+			finalWeight, _ := strconv.ParseFloat(roundedWeight, 64)
+			
+			loras = append(loras, LoraData{
+				Name:   name,
+				Weight: finalWeight,
+			})
+		}
+	}
+	
+	// Remove all LoRA tags from the text
+	cleanedText := loraRegex.ReplaceAllString(text, "")
+	
+	// Clean up extra spaces that might be left after removing LoRAs
+	cleanedText = regexp.MustCompile(`\s+`).ReplaceAllString(cleanedText, " ")
+	cleanedText = strings.TrimSpace(cleanedText)
+	
+	return cleanedText, loras
+}
 
 func (app *App) parseGenerationParams(text string, metadata *ImageMetadata) {
 	// Clean Unicode encoding where spaces are inserted between characters
@@ -46,7 +89,10 @@ func (app *App) parseGenerationParams(text string, metadata *ImageMetadata) {
 
 			// Join all prompt lines and set as the full prompt
 			if len(promptLines) > 0 {
-				metadata.Prompt = strings.Join(promptLines, "\n")
+				fullPrompt := strings.Join(promptLines, "\n")
+				cleanedPrompt, promptLoRAs := extractLoRAs(fullPrompt)
+				metadata.Prompt = cleanedPrompt
+				metadata.LoRAs = append(metadata.LoRAs, promptLoRAs...)
 			}
 		}
 
@@ -58,14 +104,22 @@ func (app *App) parseGenerationParams(text string, metadata *ImageMetadata) {
 				negEnd = strings.Index(cleanText[negStart:], "Steps:")
 			}
 			if negEnd != -1 {
-				metadata.NegPrompt = strings.TrimSpace(cleanText[negStart : negStart+negEnd])
+				negPrompt := strings.TrimSpace(cleanText[negStart : negStart+negEnd])
+				cleanedNegPrompt, negLoRAs := extractLoRAs(negPrompt)
+				metadata.NegPrompt = cleanedNegPrompt
+				metadata.LoRAs = append(metadata.LoRAs, negLoRAs...)
 			} else {
-				metadata.NegPrompt = strings.TrimSpace(cleanText[negStart:])
+				negPrompt := strings.TrimSpace(cleanText[negStart:])
+				cleanedNegPrompt, negLoRAs := extractLoRAs(negPrompt)
+				metadata.NegPrompt = cleanedNegPrompt
+				metadata.LoRAs = append(metadata.LoRAs, negLoRAs...)
 			}
 		}
 	} else if metadata.Prompt == "" {
 		// If no generation parameters found, treat the whole text as prompt
-		metadata.Prompt = cleanText
+		cleanedPrompt, promptLoRAs := extractLoRAs(cleanText)
+		metadata.Prompt = cleanedPrompt
+		metadata.LoRAs = append(metadata.LoRAs, promptLoRAs...)
 	}
 
 	// Extract numeric parameters

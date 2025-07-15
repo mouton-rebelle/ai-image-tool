@@ -13,6 +13,7 @@
            data-seed="{{.Seed}}"
            data-prompt="{{.Prompt}}"
            data-neg-prompt="{{.NegPrompt}}"
+           data-loras="{{range $i, $lora := .LoRAs}}{{if $i}},{{end}}{{$lora.Name}}:{{printf "%.2f" $lora.Weight}}{{end}}"
            onclick="event.preventDefault(); openLightboxFromData(this, '{{.ImageURL}}'); return false;">
             <img src="/thumbnails/{{.Filename}}" alt="Image {{.ID}}">
         </a>
@@ -234,6 +235,7 @@ document.addEventListener('htmx:targetError', function(event) {
        data-seed="{{.Seed}}"
        data-prompt="{{.Prompt}}"
        data-neg-prompt="{{.NegPrompt}}"
+       data-loras="{{range $i, $lora := .LoRAs}}{{if $i}},{{end}}{{$lora.Name}}:{{printf "%.2f" $lora.Weight}}{{end}}"
        onclick="event.preventDefault(); openLightboxFromData(this, '{{.ImageURL}}'); return false;">
         <img src="/thumbnails/{{.Filename}}" alt="Image {{.ID}}">
     </a>

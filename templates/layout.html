@@ -23,7 +23,10 @@
                 </div>
                 <input type="hidden" name="nsfw" id="nsfw-filter" value="{{.NSFWFilter}}">
                 <input type="hidden" name="page" value="1">
-                <button type="submit" class="search-btn">Search</button>
+                <div class="search-actions">
+                    <button type="submit" class="search-btn">Search</button>
+                    <button type="button" class="clear-btn" id="clear-btn" onclick="clearFilters()" title="Clear all filters" disabled>✕</button>
+                </div>
             </form>
             
             <div class="filter-buttons">
@@ -60,13 +63,11 @@
                     <span id="lightbox-cfg"></span>
                     <span id="lightbox-sampler"></span>
                     <span id="lightbox-scheduler"></span>
+                    <span id="lightbox-seed" class="clickable-seed" onclick="copySeed()" title="Click to copy seed"></span>
                 </div>
-                <div class="lightbox-seed-section">
-                    <strong>Seed:</strong>
-                    <div class="seed-container">
-                        <span id="lightbox-seed"></span>
-                        <button class="seed-copy-btn" onclick="copyLightboxSeed()" title="Copy seed">Copy</button>
-                    </div>
+                <div class="lightbox-loras-section" id="lightbox-loras-section">
+                    <strong>LoRAs:</strong>
+                    <div class="loras-container" id="lightbox-loras"></div>
                 </div>
                 <div class="lightbox-prompts">
                     <div class="lightbox-prompt-section">
@@ -142,6 +143,71 @@
         
         // Update URL after search
         setTimeout(window.updateURL, 100);
+    }
+    
+    function clearFilters() {
+        // Clear only prompt and model inputs (not NSFW filter)
+        const promptInput = document.querySelector('.prompt-input');
+        const modelSelect = document.querySelector('.model-select');
+        const nsfwFilter = document.getElementById('nsfw-filter');
+        
+        promptInput.value = '';
+        modelSelect.value = 'all';
+        
+        // Update current search parameters (preserve NSFW filter)
+        window.currentModel = 'all';
+        window.currentSearch = '';
+        window.currentPage = 1;
+        
+        // Get current NSFW filter value
+        const currentNSFWFilter = nsfwFilter.value;
+        
+        // Build URL with current NSFW filter
+        const params = new URLSearchParams();
+        params.set('page', '1');
+        params.set('nsfw', currentNSFWFilter);
+        
+        const url = `/api/images?${params.toString()}`;
+        
+        // Load images with current NSFW filter
+        const imageResults = document.getElementById('image-results');
+        const loadMore = document.getElementById('load-more');
+        
+        // Clear existing content immediately
+        imageResults.innerHTML = '<div class="loading">Loading images...</div>';
+        
+        // Hide load more temporarily
+        if (loadMore) {
+            loadMore.style.display = 'none';
+        }
+        
+        // Make the HTMX request
+        htmx.ajax('GET', url, {
+            target: '#image-results',
+            swap: 'innerHTML'
+        });
+        
+        // Update URL to preserve NSFW filter
+        const newURL = currentNSFWFilter === 'all' ? '/' : `/?nsfw=${currentNSFWFilter}`;
+        history.replaceState(null, '', newURL);
+        
+        // Update clear button state
+        updateClearButtonState();
+    }
+    
+    function hasActiveFilters() {
+        const promptInput = document.querySelector('.prompt-input');
+        const modelSelect = document.querySelector('.model-select');
+        
+        return (promptInput && promptInput.value.trim() !== '') ||
+               (modelSelect && modelSelect.value !== 'all');
+    }
+    
+    function updateClearButtonState() {
+        const clearBtn = document.getElementById('clear-btn');
+        if (clearBtn) {
+            clearBtn.disabled = !hasActiveFilters();
+        }
     }
     
     // Initialize filter state (will be updated from form values)
@@ -263,6 +329,20 @@
             if (window.buildLightboxImageList) {
                 window.buildLightboxImageList();
             }
+            // Initialize clear button state
+            updateClearButtonState();
+            
+            // Add event listeners for form changes
+            const promptInput = document.querySelector('.prompt-input');
+            const modelSelect = document.querySelector('.model-select');
+            
+            if (promptInput) {
+                promptInput.addEventListener('input', updateClearButtonState);
+            }
+            
+            if (modelSelect) {
+                modelSelect.addEventListener('change', updateClearButtonState);
+            }
         }, 50);
     });
     
@@ -302,7 +382,8 @@
                 scheduler: window.decodeHtmlEntities(link.getAttribute('data-scheduler') || ''),
                 seed: link.getAttribute('data-seed') || '',
                 prompt: window.decodeHtmlEntities(link.getAttribute('data-prompt') || ''),
-                negPrompt: window.decodeHtmlEntities(link.getAttribute('data-neg-prompt') || '')
+                negPrompt: window.decodeHtmlEntities(link.getAttribute('data-neg-prompt') || ''),
+                loras: link.getAttribute('data-loras') || ''
             };
         });
     };
@@ -316,11 +397,12 @@
         const seed = element.getAttribute('data-seed') || '';
         const prompt = window.decodeHtmlEntities(element.getAttribute('data-prompt') || '');
         const negPrompt = window.decodeHtmlEntities(element.getAttribute('data-neg-prompt') || '');
+        const loras = element.getAttribute('data-loras') || '';
         
-        window.openLightbox(imageSrc, element.getAttribute('data-image-id'), model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt);
+        window.openLightbox(imageSrc, element.getAttribute('data-image-id'), model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras);
     };
     
-    window.openLightbox = function(imageSrc, id, model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt) {
+    window.openLightbox = function(imageSrc, id, model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras) {
         // Build/update the image list
         window.buildLightboxImageList();
         
@@ -339,7 +421,7 @@
         lightboxImg.src = imageSrc;
         
         // Populate metadata
-        window.populateLightboxMetadata(model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt);
+        window.populateLightboxMetadata(model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras);
         
         lightbox.classList.add('active');
         
@@ -350,7 +432,7 @@
         window.updateArrowVisibility();
     };
     
-    window.populateLightboxMetadata = function(model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt) {
+    window.populateLightboxMetadata = function(model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras) {
         // Clean model name - remove .safetensors extension
         let cleanModel = model || 'Unknown Model';
         if (cleanModel.endsWith('.safetensors')) {
@@ -380,10 +462,38 @@
         document.getElementById('lightbox-steps').textContent = steps ? `Steps: ${steps}` : '';
         document.getElementById('lightbox-cfg').textContent = cfg ? `CFG: ${cfg}` : '';
         document.getElementById('lightbox-sampler').textContent = sampler ? `Sampler: ${sampler}` : '';
-        document.getElementById('lightbox-scheduler').textContent = scheduler ? `Scheduler: ${scheduler}` : '';
+        
+        // Scheduler - hide if empty
+        const schedulerElement = document.getElementById('lightbox-scheduler');
+        if (scheduler && scheduler.trim()) {
+            schedulerElement.textContent = `Scheduler: ${scheduler}`;
+            schedulerElement.style.display = '';
+        } else {
+            schedulerElement.style.display = 'none';
+        }
         
         // Seed
-        document.getElementById('lightbox-seed').textContent = seed || 'N/A';
+        document.getElementById('lightbox-seed').textContent = seed ? `Seed: ${seed}` : 'Seed: N/A';
+        
+        // LoRAs
+        const lorasSection = document.getElementById('lightbox-loras-section');
+        const lorasContainer = document.getElementById('lightbox-loras');
+        if (loras && loras.trim()) {
+            lorasContainer.innerHTML = '';
+            const loraItems = loras.split(',');
+            loraItems.forEach(loraItem => {
+                const [name, weight] = loraItem.split(':');
+                if (name && weight) {
+                    const loraElement = document.createElement('span');
+                    loraElement.className = 'lora-item';
+                    loraElement.textContent = `${name.trim()}: ${weight.trim()}`;
+                    lorasContainer.appendChild(loraElement);
+                }
+            });
+            lorasSection.style.display = 'block';
+        } else {
+            lorasSection.style.display = 'none';
+        }
         
         // Prompts
         document.getElementById('lightbox-prompt').textContent = prompt || 'No prompt available';
@@ -419,7 +529,7 @@
             // Update metadata for current image
             const metadata = window.lightboxMetadata[window.currentLightboxIndex];
             if (metadata) {
-                window.populateLightboxMetadata(metadata.model, metadata.steps, metadata.cfg, metadata.sampler, metadata.scheduler, metadata.seed, metadata.prompt, metadata.negPrompt);
+                window.populateLightboxMetadata(metadata.model, metadata.steps, metadata.cfg, metadata.sampler, metadata.scheduler, metadata.seed, metadata.prompt, metadata.negPrompt, metadata.loras);
             }
             
             window.updateArrowVisibility();
@@ -435,7 +545,7 @@
             // Update metadata for current image
             const metadata = window.lightboxMetadata[window.currentLightboxIndex];
             if (metadata) {
-                window.populateLightboxMetadata(metadata.model, metadata.steps, metadata.cfg, metadata.sampler, metadata.scheduler, metadata.seed, metadata.prompt, metadata.negPrompt);
+                window.populateLightboxMetadata(metadata.model, metadata.steps, metadata.cfg, metadata.sampler, metadata.scheduler, metadata.seed, metadata.prompt, metadata.negPrompt, metadata.loras);
             }
             
             window.updateArrowVisibility();
@@ -483,20 +593,20 @@
     };
     
     
-    window.copyLightboxSeed = function() {
+    window.copySeed = function() {
         if (!window.currentSeed) return;
         
         navigator.clipboard.writeText(window.currentSeed).then(function() {
-            // Show feedback
-            const button = document.querySelector('.seed-copy-btn');
-            const originalText = button.innerHTML;
-            button.innerHTML = 'Copied!';
-            button.style.backgroundColor = '#28a745';
+            // Show feedback on the seed element
+            const seedElement = document.getElementById('lightbox-seed');
+            const originalBg = seedElement.style.backgroundColor;
+            seedElement.style.backgroundColor = '#28a745';
+            seedElement.style.color = 'white';
             
             setTimeout(function() {
-                button.innerHTML = originalText;
-                button.style.backgroundColor = '#007bff';
-            }, 2000);
+                seedElement.style.backgroundColor = originalBg;
+                seedElement.style.color = '';
+            }, 1000);
         }).catch(function(err) {
             console.error('Failed to copy seed: ', err);
             alert('Failed to copy seed to clipboard');

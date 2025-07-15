@@ -2,11 +2,13 @@ package main
 
 import (
 	"database/sql"
+	"flag"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
@@ -64,24 +66,25 @@ type CivitaiVersionResponse struct {
 }
 
 type ImageMetadata struct {
-	ID              int     `json:"id"`
-	Filename        string  `json:"filename"`
-	Width           int     `json:"width"`
-	Height          int     `json:"height"`
-	ModelID         *int    `json:"model_id"`
-	Model           string  `json:"model"` // For display purposes
-	ModelHash       string  `json:"model_hash"`
-	Prompt          string  `json:"prompt"`
-	NegPrompt       string  `json:"neg_prompt"`
-	Steps           int     `json:"steps"`
-	CFGScale        float64 `json:"cfg_scale"`
-	Sampler         string  `json:"sampler"`
-	Scheduler       string  `json:"scheduler"`
-	Seed            int64   `json:"seed"`
-	ThumbnailPath   string  `json:"thumbnail_path"`
-	IsNSFW          bool    `json:"is_nsfw"`
-	ImageURL        string  `json:"image_url"`      // Full URL to the image
-	TruncatedPrompt string  `json:"-"`
+	ID              int       `json:"id"`
+	Filename        string    `json:"filename"`
+	Width           int       `json:"width"`
+	Height          int       `json:"height"`
+	ModelID         *int      `json:"model_id"`
+	Model           string    `json:"model"` // For display purposes
+	ModelHash       string    `json:"model_hash"`
+	Prompt          string    `json:"prompt"`
+	NegPrompt       string    `json:"neg_prompt"`
+	Steps           int       `json:"steps"`
+	CFGScale        float64   `json:"cfg_scale"`
+	Sampler         string    `json:"sampler"`
+	Scheduler       string    `json:"scheduler"`
+	Seed            int64     `json:"seed"`
+	ThumbnailPath   string    `json:"thumbnail_path"`
+	IsNSFW          bool      `json:"is_nsfw"`
+	ImageURL        string    `json:"image_url"`      // Full URL to the image
+	TruncatedPrompt string    `json:"-"`
+	LoRAs           []LoraData `json:"loras"` // LoRA data for JSON and template display
 }
 
 type ModelStat struct {
@@ -125,6 +128,23 @@ type App struct {
 }
 
 func main() {
+	// Parse command line flags
+	clearImages := flag.Bool("clear-images", false, "Clear images and loras tables (preserves models)")
+	help := flag.Bool("help", false, "Show usage information")
+	flag.Parse()
+
+	if *help {
+		fmt.Println("AI Generated Image Viewer")
+		fmt.Println("Usage:")
+		fmt.Println("  ./ai-generated-image-viewer              # Run the web server")
+		fmt.Println("  ./ai-generated-image-viewer -clear-images # Clear images and LoRAs tables")
+		fmt.Println("  ./ai-generated-image-viewer -help         # Show this help")
+		fmt.Println("")
+		fmt.Println("Development:")
+		fmt.Println("  ./clear_images.sh                        # Alternative way to clear tables")
+		os.Exit(0)
+	}
+
 	app := &App{}
 
 	// Initialize templates
@@ -137,6 +157,16 @@ func main() {
 		log.Fatal("Failed to initialize database:", err)
 	}
 	defer app.db.Close()
+
+	// Handle clear-images flag
+	if *clearImages {
+		if err := app.clearImagesTables(); err != nil {
+			log.Fatal("Failed to clear images tables:", err)
+		}
+		fmt.Println("Images and LoRAs tables cleared successfully.")
+		fmt.Println("Models table preserved. You can now run the application normally.")
+		os.Exit(0)
+	}
 
 	// Process images and create thumbnails
 	if err := app.processImages(); err != nil {
@@ -196,7 +226,7 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// Get total count based on current filters
 	var totalCount int
 	var countQuery string
-	var args []interface{}
+	var args []any
 
 	// Build count query with filters
 	whereClause := "WHERE 1=1"
@@ -350,7 +380,7 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 		}
 	}
 
-	// Select query
+	// Select query with LEFT JOIN to loras table
 	selectQuery := `
 		SELECT i.id, i.filename, i.width, i.height, 
 		       CASE 
@@ -358,10 +388,15 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 		           WHEN m.name IS NOT NULL THEN m.name
 		           ELSE 'Unknown Model'
 		       END as model_display,
-		       i.prompt, i.neg_prompt, i.steps, i.cfg_scale, i.sampler, i.scheduler, i.seed, i.thumbnail_path, i.is_nsfw
+		       i.prompt, i.neg_prompt, i.steps, i.cfg_scale, i.sampler, i.scheduler, i.seed, i.thumbnail_path, i.is_nsfw,
+		       l.name as lora_name, l.weight as lora_weight
 		FROM images i
-		LEFT JOIN models m ON i.model_id = m.id ` + whereClause + `
-		ORDER BY i.id DESC 
+		LEFT JOIN models m ON i.model_id = m.id
+		LEFT JOIN (
+			SELECT DISTINCT image_id, name, weight 
+			FROM loras
+		) l ON i.id = l.image_id ` + whereClause + `
+		ORDER BY i.id DESC, l.name ASC
 		LIMIT ? OFFSET ?
 	`
 
@@ -374,20 +409,55 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 	defer rows.Close()
 
 	var images []ImageMetadata
+	imageMap := make(map[int]*ImageMetadata)
+	var orderedIDs []int
+
 	for rows.Next() {
 		var img ImageMetadata
+		var loraName, loraWeight sql.NullString
+		
 		err := rows.Scan(&img.ID, &img.Filename, &img.Width, &img.Height,
 			&img.Model, &img.Prompt, &img.NegPrompt, &img.Steps, &img.CFGScale,
-			&img.Sampler, &img.Scheduler, &img.Seed, &img.ThumbnailPath, &img.IsNSFW)
+			&img.Sampler, &img.Scheduler, &img.Seed, &img.ThumbnailPath, &img.IsNSFW,
+			&loraName, &loraWeight)
 		if err != nil {
 			log.Printf("Error scanning row: %v", err)
 			continue
 		}
 
-		// Set the correct image URL based on NSFW flag
-		img.SetImageURL()
+		// Check if we already have this image
+		if existingImg, exists := imageMap[img.ID]; exists {
+			// Image already exists, just add LoRA data if present
+			if loraName.Valid && loraWeight.Valid {
+				weight, _ := strconv.ParseFloat(loraWeight.String, 64)
+				existingImg.LoRAs = append(existingImg.LoRAs, LoraData{
+					Name:   loraName.String,
+					Weight: weight,
+				})
+			}
+		} else {
+			// New image, set URL and add to map
+			img.SetImageURL()
+			
+			// Add LoRA data if present
+			if loraName.Valid && loraWeight.Valid {
+				weight, _ := strconv.ParseFloat(loraWeight.String, 64)
+				img.LoRAs = append(img.LoRAs, LoraData{
+					Name:   loraName.String,
+					Weight: weight,
+				})
+			}
+			
+			imageMap[img.ID] = &img
+			orderedIDs = append(orderedIDs, img.ID)
+		}
+	}
 
-		images = append(images, img)
+	// Convert map back to ordered slice
+	for _, id := range orderedIDs {
+		if img, exists := imageMap[id]; exists {
+			images = append(images, *img)
+		}
 	}
 
 	return images, total, nil

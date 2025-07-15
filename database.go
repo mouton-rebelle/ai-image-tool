@@ -64,13 +64,66 @@ func (app *App) initDB() error {
 	CREATE INDEX IF NOT EXISTS idx_nsfw ON images(is_nsfw);
 	`
 
+	// Create loras table
+	createLorasTable := `
+	CREATE TABLE IF NOT EXISTS loras (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		image_id INTEGER NOT NULL,
+		name TEXT NOT NULL,
+		weight REAL NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+	);
+	
+	CREATE INDEX IF NOT EXISTS idx_lora_image_id ON loras(image_id);
+	CREATE INDEX IF NOT EXISTS idx_lora_name ON loras(name);
+	`
+
 	_, err = app.db.Exec(createModelsTable)
 	if err != nil {
 		return err
 	}
 
 	_, err = app.db.Exec(createImagesTable)
+	if err != nil {
+		return err
+	}
+
+	_, err = app.db.Exec(createLorasTable)
 	return err
+}
+
+func (app *App) clearImagesTables() error {
+	// Clear loras table first (foreign key constraint)
+	_, err := app.db.Exec("DELETE FROM loras")
+	if err != nil {
+		return fmt.Errorf("failed to clear loras table: %v", err)
+	}
+
+	// Clear images table
+	_, err = app.db.Exec("DELETE FROM images")
+	if err != nil {
+		return fmt.Errorf("failed to clear images table: %v", err)
+	}
+
+	// Reset auto-increment sequences
+	_, err = app.db.Exec("DELETE FROM sqlite_sequence WHERE name IN ('loras')")
+	if err != nil {
+		return fmt.Errorf("failed to reset sequences: %v", err)
+	}
+
+	// Get counts for confirmation
+	var modelCount, imageCount, loraCount int
+	app.db.QueryRow("SELECT COUNT(*) FROM models").Scan(&modelCount)
+	app.db.QueryRow("SELECT COUNT(*) FROM images").Scan(&imageCount)
+	app.db.QueryRow("SELECT COUNT(*) FROM loras").Scan(&loraCount)
+
+	fmt.Printf("Table counts after clearing:\n")
+	fmt.Printf("  Models: %d (preserved)\n", modelCount)
+	fmt.Printf("  Images: %d (cleared)\n", imageCount)
+	fmt.Printf("  LoRAs: %d (cleared)\n", loraCount)
+
+	return nil
 }
 
 func (app *App) getOrCreateModel(hash string) (*Model, error) {
@@ -172,6 +225,35 @@ func (app *App) insertImageMetadata(metadata *ImageMetadata) error {
 
 	return err
 }
+
+type LoraData struct {
+	Name   string
+	Weight float64
+}
+
+func (app *App) insertLoraData(imageID int, loras []LoraData) error {
+	if len(loras) == 0 {
+		return nil
+	}
+
+	// Prepare statement for bulk insert
+	stmt, err := app.db.Prepare("INSERT INTO loras (image_id, name, weight) VALUES (?, ?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	// Insert each LoRA
+	for _, lora := range loras {
+		_, err := stmt.Exec(imageID, lora.Name, lora.Weight)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 
 func (app *App) getModelStats() ([]ModelStat, error) {
 	query := `

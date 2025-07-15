@@ -50,7 +50,14 @@ go mod tidy
 go run main.go
 
 # Build for production
-go build -o civitai-viewer main.go
+go build -o ai-generated-image-viewer main.go
+
+# Development: Clear images and LoRAs tables (preserves models)
+# Option 1: Using shell script
+./clear_images.sh
+
+# Option 2: Using application flag
+./ai-generated-image-viewer -clear-images
 
 # Access web interface
 open http://localhost:8081
@@ -153,6 +160,12 @@ The application integrates with Civitai's REST API v1:
   - AI generation parameters (model, prompt, negative prompt, steps, CFG scale, sampler, scheduler, seed)
   - NSFW classification and thumbnail path
   - Creation timestamp and indexes on model and prompt fields for fast searching
+  - Note: Prompts are cleaned of LoRA tags before storage
+- **LoRAs Table**: Stores LoRA information extracted from prompts
+  - ID, image_id (foreign key), name, weight, creation timestamp
+  - Indexes on image_id and name for efficient lookups
+- **Models Table**: Stores model information from Civitai API
+  - ID, hash, name, version_name, type, NSFW flag, description, base_model, creation timestamp
 
 ### EXIF Metadata Extraction
 - **Multi-field parsing**: Checks UserComment, ImageDescription, Software, Artist, Copyright fields

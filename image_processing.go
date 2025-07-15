@@ -95,6 +95,15 @@ func (app *App) processImages() error {
 		err = app.insertImageMetadata(metadata)
 		if err != nil {
 			log.Printf("Error inserting metadata for %s: %v", filename, err)
+			continue
+		}
+
+		// Insert LoRA data
+		if len(metadata.LoRAs) > 0 {
+			err = app.insertLoraData(metadata.ID, metadata.LoRAs)
+			if err != nil {
+				log.Printf("Error inserting LoRA data for %s: %v", filename, err)
+			}
 		}
 	}
 
