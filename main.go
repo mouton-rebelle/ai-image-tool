@@ -130,18 +130,30 @@ type App struct {
 func main() {
 	// Parse command line flags
 	clearImages := flag.Bool("clear-images", false, "Clear images and loras tables (preserves models)")
+	importImages := flag.Bool("import-civitai", false, "Import images and prompts from Civitai API")
 	help := flag.Bool("help", false, "Show usage information")
 	flag.Parse()
 
 	if *help {
 		fmt.Println("AI Generated Image Viewer")
 		fmt.Println("Usage:")
-		fmt.Println("  ./ai-generated-image-viewer              # Run the web server")
-		fmt.Println("  ./ai-generated-image-viewer -clear-images # Clear images and LoRAs tables")
-		fmt.Println("  ./ai-generated-image-viewer -help         # Show this help")
+		fmt.Println("  ./ai-generated-image-viewer                # Run the web server")
+		fmt.Println("  ./ai-generated-image-viewer -clear-images  # Clear images and LoRAs tables")
+		fmt.Println("  ./ai-generated-image-viewer -import-civitai # Import images from Civitai API")
+		fmt.Println("  ./ai-generated-image-viewer -help          # Show this help")
+		fmt.Println("")
+		fmt.Println("Configuration for Import:")
+		fmt.Println("  1. Create civitai.config file (copy from civitai.config.example)")
+		fmt.Println("  2. Or use environment variables:")
+		fmt.Println("     CIVITAI_TOKEN    # API token (optional, for higher rate limits)")
+		fmt.Println("     CIVITAI_USERNAME # Username to fetch from (default: moutonrebelle)")
+		fmt.Println("     CIVITAI_PERIOD   # Time period (default: AllTime)")
+		fmt.Println("     CIVITAI_NSFW     # Include NSFW (default: true)")
+		fmt.Println("")
+		fmt.Println("  Note: Sort order is fixed to 'Most Recent'")
 		fmt.Println("")
 		fmt.Println("Development:")
-		fmt.Println("  ./clear_images.sh                        # Alternative way to clear tables")
+		fmt.Println("  ./clear_images.sh                         # Alternative way to clear tables")
 		os.Exit(0)
 	}
 
@@ -165,6 +177,15 @@ func main() {
 		}
 		fmt.Println("Images and LoRAs tables cleared successfully.")
 		fmt.Println("Models table preserved. You can now run the application normally.")
+		os.Exit(0)
+	}
+
+	// Handle import-civitai flag
+	if *importImages {
+		if err := app.importFromCivitai(); err != nil {
+			log.Fatal("Failed to import from Civitai:", err)
+		}
+		fmt.Println("Civitai import completed successfully.")
 		os.Exit(0)
 	}
 

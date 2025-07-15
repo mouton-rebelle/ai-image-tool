@@ -50,7 +50,10 @@ go mod tidy
 go run main.go
 
 # Build for production
-go build -o ai-generated-image-viewer main.go
+go build -o ai-generated-image-viewer *.go
+
+# Import images from Civitai API
+CIVITAI_USERNAME=username ./ai-generated-image-viewer -import-civitai
 
 # Development: Clear images and LoRAs tables (preserves models)
 # Option 1: Using shell script

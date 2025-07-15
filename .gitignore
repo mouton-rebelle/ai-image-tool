@@ -1,4 +1,6 @@
 # Generated and imported files
+civitai.config
+
 images/
 images_nsfw/
 thumbnails/
@@ -11,12 +13,9 @@ prompts_nsfw.txt
 prompts_sfw.txt
 
 # Go build artifacts
-civitai-viewer
+ai-generated-image-viewer
 go.sum
 tmp
-
-# Deno cache and generated files
-.deno/
 
 # IDE and editor files
 .vscode/
