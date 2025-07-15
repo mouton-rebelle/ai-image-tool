@@ -1,20 +1,11 @@
 # Civitai Import Configuration
 # Copy this file to civitai.config and customize the values
 
-# Required: API TOKEN
-CIVITAI_TOKEN=your_token
+# Required: API token for higher rate limits
+# Get your token from https://civitai.com/user/account
+CIVITAI_TOKEN=your_token_here
 
 # Required: Username to fetch images from
 CIVITAI_USERNAME=your_username
 
-# Optional: API token for higher rate limits
-# Get your token from https://civitai.com/user/account
-# CIVITAI_TOKEN=your_token_here
-
-# Optional: Time period filter (default: AllTime)
-# Options: AllTime, Year, Month, Week, Day
-CIVITAI_PERIOD=AllTime
-
-# Optional: Include NSFW content (default: true)
-# Options: true, false
-CIVITAI_NSFW=true
+# Note: Import will fetch all images (both SFW and NSFW)

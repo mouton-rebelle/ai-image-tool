@@ -1,0 +1,109 @@
+name: Release Binaries
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers on version tags like v1.0.0
+  release:
+    types: [created]
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  build:
+    name: Build Cross-Platform Binaries
+    strategy:
+      matrix:
+        include:
+          # Linux builds (with CGO support)
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            cgo: 1
+            cc: gcc
+            name: linux-amd64
+            
+          # Windows builds (with CGO support via mingw)
+          - runner: ubuntu-latest
+            goos: windows
+            goarch: amd64
+            cgo: 1
+            cc: x86_64-w64-mingw32-gcc
+            name: windows-amd64
+            
+          # macOS builds (native compilation)
+          - runner: macos-latest
+            goos: darwin
+            goarch: amd64
+            cgo: 1
+            cc: clang
+            name: macos-amd64
+            
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+            cgo: 1
+            cc: clang
+            name: macos-arm64
+
+    runs-on: ${{ matrix.runner }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Install cross-compilation tools (Linux)
+      if: matrix.runner == 'ubuntu-latest' && matrix.goos == 'windows'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-mingw-w64-x86-64
+
+    - name: Get dependencies
+      run: go mod download
+
+    - name: Build binary
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: ${{ matrix.cgo }}
+        CC: ${{ matrix.cc }}
+      run: |
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          binary_name="ai-generated-image-viewer-${{ matrix.name }}.exe"
+        else
+          binary_name="ai-generated-image-viewer-${{ matrix.name }}"
+        fi
+        
+        echo "Building ${binary_name}..."
+        go build -ldflags="-s -w" -o "${binary_name}"
+        
+        # Create archive
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          zip "ai-generated-image-viewer-${{ matrix.name }}.zip" "${binary_name}" civitai.config.example
+        else
+          tar -czf "ai-generated-image-viewer-${{ matrix.name }}.tar.gz" "${binary_name}" civitai.config.example
+        fi
+
+    - name: Upload Release Assets
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          ai-generated-image-viewer-${{ matrix.name }}.*
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload Artifacts (for manual runs)
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/upload-artifact@v3
+      with:
+        name: ai-generated-image-viewer-${{ matrix.name }}
+        path: |
+          ai-generated-image-viewer-${{ matrix.name }}.*
+        retention-days: 30

@@ -2,21 +2,30 @@
 body { 
     font-family: Arial, sans-serif; 
     margin: 0; 
-    padding: 20px; 
+    padding: 0; 
     background: #f5f5f5; 
 }
 
 .container { 
     max-width: 1200px; 
     margin: 0 auto; 
+    padding: 0 20px;
+    padding-top: 180px; /* Space for fixed header */
 }
 
 .header { 
     background: white; 
     padding: 20px; 
-    border-radius: 8px; 
-    margin-bottom: 20px; 
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+    border-radius: 0 0 8px 8px; 
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15); 
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    width: 100%;
+    max-width: 1200px;
+    box-sizing: border-box;
 }
 
 .image-count {
@@ -137,11 +146,38 @@ body {
     .image-card {
         width: calc(50% - 7.5px); /* 2 columns */
     }
+    
+    .container {
+        padding-top: 200px; /* More space for mobile header */
+    }
 }
 
 @media (max-width: 600px) {
     .image-card {
         width: 100%; /* 1 column */
+    }
+    
+    .container {
+        padding: 0 10px;
+        padding-top: 220px; /* More space for mobile header */
+    }
+    
+    .header {
+        padding: 15px;
+    }
+    
+    .search-inputs {
+        grid-template-columns: 1fr; /* Stack inputs vertically on mobile */
+        grid-gap: 10px;
+    }
+    
+    .search-form {
+        grid-template-columns: 1fr; /* Stack search form vertically on mobile */
+    }
+    
+    .search-actions {
+        justify-content: center;
+        margin-top: 10px;
     }
 }
 
@@ -222,7 +258,7 @@ body {
     width: 100%;
     height: 100%;
     background: rgba(0, 0, 0, 0.9);
-    z-index: 1000;
+    z-index: 2000; /* Higher than sticky header */
     cursor: pointer;
 }
 

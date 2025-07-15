@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -48,8 +49,6 @@ type CivitaiImage struct {
 type ImportConfig struct {
 	Token    string
 	Username string
-	Period   string
-	NSFW     string
 }
 
 // getImportConfig reads configuration from config file or environment variables
@@ -63,8 +62,6 @@ func getImportConfig() *ImportConfig {
 	config := &ImportConfig{
 		Token:    os.Getenv("CIVITAI_TOKEN"),
 		Username: getEnvOrDefault("CIVITAI_USERNAME", "moutonrebelle"),
-		Period:   getEnvOrDefault("CIVITAI_PERIOD", "AllTime"),
-		NSFW:     getEnvOrDefault("CIVITAI_NSFW", "true"),
 	}
 	return config
 }
@@ -84,10 +81,7 @@ func loadConfigFromFile() *ImportConfig {
 	}
 	defer file.Close()
 
-	config := &ImportConfig{
-		Period: "AllTime", // Default values
-		NSFW:   "true",
-	}
+	config := &ImportConfig{}
 
 	content, err := io.ReadAll(file)
 	if err != nil {
@@ -115,10 +109,6 @@ func loadConfigFromFile() *ImportConfig {
 			config.Token = value
 		case "CIVITAI_USERNAME":
 			config.Username = value
-		case "CIVITAI_PERIOD":
-			config.Period = value
-		case "CIVITAI_NSFW":
-			config.NSFW = value
 		}
 	}
 
@@ -136,9 +126,9 @@ func (app *App) importFromCivitai() error {
 	
 	fmt.Printf("Starting Civitai import with config:\n")
 	fmt.Printf("  Username: %s\n", config.Username)
-	fmt.Printf("  Sort: Most Recent\n")
-	fmt.Printf("  Period: %s\n", config.Period)
-	fmt.Printf("  NSFW: %s\n", config.NSFW)
+	fmt.Printf("  Sort: Newest\n")
+	fmt.Printf("  Period: AllTime\n")
+	fmt.Printf("  Content: All images (SFW + NSFW)\n")
 	fmt.Printf("  Token: %s\n", func() string {
 		if config.Token != "" {
 			return "provided"
@@ -155,17 +145,25 @@ func (app *App) importFromCivitai() error {
 		return fmt.Errorf("failed to create images_nsfw directory: %v", err)
 	}
 
-	// Initialize prompt tracking
-	prompts := make(map[string]bool)
-	var promptsFile *os.File
+	// Initialize prompt tracking for both SFW and NSFW
+	sfwPrompts := make(map[string]bool)
+	nsfwPrompts := make(map[string]bool)
+	var sfwPromptsFile, nsfwPromptsFile *os.File
 	var err error
 
-	// Create or truncate prompts.txt
-	promptsFile, err = os.Create("prompts.txt")
+	// Create or truncate prompts_sfw.txt
+	sfwPromptsFile, err = os.Create("prompts_sfw.txt")
 	if err != nil {
-		return fmt.Errorf("failed to create prompts.txt: %v", err)
+		return fmt.Errorf("failed to create prompts_sfw.txt: %v", err)
 	}
-	defer promptsFile.Close()
+	defer sfwPromptsFile.Close()
+
+	// Create or truncate prompts_nsfw.txt
+	nsfwPromptsFile, err = os.Create("prompts_nsfw.txt")
+	if err != nil {
+		return fmt.Errorf("failed to create prompts_nsfw.txt: %v", err)
+	}
+	defer nsfwPromptsFile.Close()
 
 	// Load excluded words
 	excludedWords := loadExcludedWords()
@@ -211,16 +209,26 @@ func (app *App) importFromCivitai() error {
 				fmt.Printf("  Skipped image %d (already exists)\n", img.ID)
 			}
 
-			// Process prompts
+			// Process prompts - separate by NSFW status
 			if img.Meta.Prompt != "" || img.Meta.NegPrompt != "" {
 				cleanedPrompt := cleanPrompt(img.Meta.Prompt, excludedWords)
 				cleanedNegPrompt := cleanPrompt(img.Meta.NegPrompt, excludedWords)
 
 				if cleanedPrompt != "" { // Only save if positive prompt exists after cleaning
 					promptPair := cleanedPrompt + "|||" + cleanedNegPrompt
-					if !prompts[promptPair] {
-						prompts[promptPair] = true
-						promptsFile.WriteString(promptPair + "\n")
+					
+					if img.NSFW {
+						// NSFW image - write to NSFW prompts file
+						if !nsfwPrompts[promptPair] {
+							nsfwPrompts[promptPair] = true
+							nsfwPromptsFile.WriteString(promptPair + "\n")
+						}
+					} else {
+						// SFW image - write to SFW prompts file
+						if !sfwPrompts[promptPair] {
+							sfwPrompts[promptPair] = true
+							sfwPromptsFile.WriteString(promptPair + "\n")
+						}
 					}
 				}
 			}
@@ -242,25 +250,32 @@ func (app *App) importFromCivitai() error {
 	fmt.Printf("\n=== Import Summary ===\n")
 	fmt.Printf("Total images processed: %d\n", totalImages)
 	fmt.Printf("Total images downloaded: %d\n", totalDownloaded)
-	fmt.Printf("Unique prompt pairs saved: %d\n", len(prompts))
-	fmt.Printf("Prompts saved to: prompts.txt\n")
+	fmt.Printf("Unique SFW prompt pairs saved: %d\n", len(sfwPrompts))
+	fmt.Printf("Unique NSFW prompt pairs saved: %d\n", len(nsfwPrompts))
+	fmt.Printf("SFW prompts saved to: prompts_sfw.txt\n")
+	fmt.Printf("NSFW prompts saved to: prompts_nsfw.txt\n")
 
 	return nil
 }
 
 // fetchCivitaiImages fetches images from the Civitai API
 func (app *App) fetchCivitaiImages(config *ImportConfig, nextPage string) ([]CivitaiImage, string, error) {
-	var url string
+	var requestURL string
 	if nextPage != "" {
-		url = nextPage
+		requestURL = nextPage
 	} else {
-		// Build initial URL
-		url = fmt.Sprintf("https://civitai.com/api/v1/images?username=%s&sort=Most Recent&period=%s&nsfw=%s&limit=100",
-			config.Username, config.Period, config.NSFW)
+		// Build initial URL with proper encoding
+		params := url.Values{}
+		params.Set("username", config.Username)
+		params.Set("sort", "Newest")
+		params.Set("nsfw", "X")
+		params.Set("period", "AllTime")
+		params.Set("limit", "100")
+		requestURL = "https://civitai.com/api/v1/images?" + params.Encode()
 	}
 
 	// Create request
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", requestURL, nil)
 	if err != nil {
 		return nil, "", err
 	}
@@ -279,7 +294,9 @@ func (app *App) fetchCivitaiImages(config *ImportConfig, nextPage string) ([]Civ
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, "", fmt.Errorf("API returned status %d", resp.StatusCode)
+		// Read response body for more details
+		body, _ := io.ReadAll(resp.Body)
+		return nil, "", fmt.Errorf("API returned status %d for URL %s. Response: %s", resp.StatusCode, requestURL, string(body))
 	}
 
 	// Parse response

@@ -11,7 +11,7 @@ thumbnails/
 # Generated output files
 prompts_nsfw.txt
 prompts_sfw.txt
-
+prompts.txt
 # Go build artifacts
 ai-generated-image-viewer
 go.sum

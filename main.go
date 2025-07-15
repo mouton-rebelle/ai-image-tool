@@ -147,13 +147,9 @@ func main() {
 		fmt.Println("  2. Or use environment variables:")
 		fmt.Println("     CIVITAI_TOKEN    # API token (optional, for higher rate limits)")
 		fmt.Println("     CIVITAI_USERNAME # Username to fetch from (default: moutonrebelle)")
-		fmt.Println("     CIVITAI_PERIOD   # Time period (default: AllTime)")
-		fmt.Println("     CIVITAI_NSFW     # Include NSFW (default: true)")
 		fmt.Println("")
-		fmt.Println("  Note: Sort order is fixed to 'Most Recent'")
-		fmt.Println("")
-		fmt.Println("Development:")
-		fmt.Println("  ./clear_images.sh                         # Alternative way to clear tables")
+		fmt.Println("  Note: Sort order is fixed to 'Newest', Period is fixed to 'AllTime'")
+		fmt.Println("        Content includes all images (both SFW and NSFW)")
 		os.Exit(0)
 	}
 
