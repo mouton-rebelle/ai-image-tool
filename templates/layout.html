@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>{{.Title}}</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/masonry-layout@4/dist/masonry.pkgd.min.js"></script>
@@ -9,22 +10,30 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>{{.Title}}</h1>
-            <form class="search-form" hx-get="/search" hx-target="#image-results" hx-trigger="submit, keyup changed delay:500ms from:input[name='q']" hx-swap="innerHTML">
-                <input type="text" class="search-input" name="q" placeholder="Search by model, prompt keywords...">
-                <input type="hidden" name="nsfw" id="nsfw-filter" value="sfw">
+            <h1>{{.Title}} <span class="image-count" id="image-count">({{.TotalCount}} images)</span></h1>
+            <form class="search-form" hx-get="/search" hx-target="#image-results" hx-trigger="submit, change from:select, keyup changed delay:500ms from:input[name='q']" hx-swap="innerHTML">
+                <div class="search-inputs">
+                    <input type="text" class="prompt-input" name="q" placeholder="Search prompts..." value="{{.SearchQuery}}">
+                    <select class="model-select" name="model">
+                        <option value="all">All Models</option>
+                        {{range $model := .Models}}
+                            <option value="{{$model.ID}}"{{if and (gt $.SelectedModelID 0) (eq $model.ID $.SelectedModelID)}} selected{{end}}>{{$model.Name}}{{if $model.VersionName}} - {{$model.VersionName}}{{end}} ({{$model.ImageCount}})</option>
+                        {{end}}
+                    </select>
+                </div>
+                <input type="hidden" name="nsfw" id="nsfw-filter" value="{{.NSFWFilter}}">
                 <input type="hidden" name="page" value="1">
                 <button type="submit" class="search-btn">Search</button>
             </form>
             
             <div class="filter-buttons">
-                <button class="filter-btn" onclick="setNSFWFilter('all')">All</button>
-                <button class="filter-btn active" onclick="setNSFWFilter('sfw')">SFW Only</button>
-                <button class="filter-btn" onclick="setNSFWFilter('nsfw')">NSFW Only</button>
+                <button class="filter-btn{{if eq .NSFWFilter "all"}} active{{end}}" onclick="setNSFWFilter('all')">All</button>
+                <button class="filter-btn{{if eq .NSFWFilter "sfw"}} active{{end}}" onclick="setNSFWFilter('sfw')">SFW Only</button>
+                <button class="filter-btn{{if eq .NSFWFilter "nsfw"}} active{{end}}" onclick="setNSFWFilter('nsfw')">NSFW Only</button>
             </div>
         </div>
         
-        <div id="image-results" hx-get="/api/images?page=1&nsfw=sfw" hx-trigger="load">
+        <div id="image-results" hx-get="{{.InitialURL}}" hx-trigger="load">
             <div class="loading">Loading images...</div>
         </div>
         
@@ -42,7 +51,10 @@
         <div class="lightbox-content">
             <img id="lightbox-img" src="" alt="">
             <div class="lightbox-metadata">
-                <h3 id="lightbox-model"></h3>
+                <div class="lightbox-model-info">
+                    <h3 id="lightbox-model"></h3>
+                    <p class="lightbox-version" id="lightbox-version"></p>
+                </div>
                 <div class="lightbox-params">
                     <span id="lightbox-steps"></span>
                     <span id="lightbox-cfg"></span>
@@ -59,14 +71,13 @@
                 <div class="lightbox-prompts">
                     <div class="lightbox-prompt-section">
                         <strong>Prompt:</strong>
-                        <p id="lightbox-prompt"></p>
+                        <p id="lightbox-prompt" class="clickable-prompt" onclick="copyPositivePrompt()" title="Click to copy positive prompt"></p>
                     </div>
                     <div class="lightbox-prompt-section" id="lightbox-neg-section">
                         <strong>Negative Prompt:</strong>
-                        <p id="lightbox-neg-prompt"></p>
+                        <p id="lightbox-neg-prompt" class="clickable-prompt" onclick="copyNegativePrompt()" title="Click to copy negative prompt"></p>
                     </div>
                 </div>
-                <button class="lightbox-copy-btn" onclick="copyLightboxPrompt()">Copy Prompt</button>
             </div>
         </div>
     </div>
@@ -85,24 +96,30 @@
         window.currentPage = 1; // Reset to page 1
         
         // Trigger search with new filter
-        const searchInput = document.querySelector('.search-input');
-        const searchValue = searchInput.value;
+        const promptInput = document.querySelector('.prompt-input');
+        const modelSelect = document.querySelector('.model-select');
+        const promptValue = promptInput.value;
+        const modelValue = modelSelect.value;
         
         let url;
-        if (searchValue.trim() === '') {
-            // No search query, just filter
-            if (filter === 'all') {
-                url = '/api/images?page=1';
-            } else {
-                url = `/api/images?page=1&nsfw=${filter}`;
-            }
+        const params = new URLSearchParams();
+        params.set('page', '1');
+        
+        // Always set nsfw parameter to preserve filter state
+        params.set('nsfw', filter);
+        
+        if (promptValue.trim() !== '') {
+            params.set('q', promptValue);
+        }
+        
+        if (modelValue !== 'all') {
+            params.set('model', modelValue);
+        }
+        
+        if (params.get('q') || params.get('model')) {
+            url = `/search?${params.toString()}`;
         } else {
-            // Has search query
-            if (filter === 'all') {
-                url = `/search?q=${encodeURIComponent(searchValue)}&page=1`;
-            } else {
-                url = `/search?q=${encodeURIComponent(searchValue)}&nsfw=${filter}&page=1`;
-            }
+            url = `/api/images?${params.toString()}`;
         }
         
         // Reset and update the request
@@ -122,10 +139,71 @@
             target: '#image-results',
             swap: 'innerHTML'
         });
+        
+        // Update URL after search
+        setTimeout(window.updateURL, 100);
     }
     
-    // Initialize filter state
-    window.currentNSFWFilter = 'sfw';
+    // Initialize filter state (will be updated from form values)
+    window.currentNSFWFilter = '{{.NSFWFilter}}';
+    window.currentModel = '{{if gt .SelectedModelID 0}}{{.SelectedModelID}}{{else}}all{{end}}';
+    window.currentSearch = '{{.SearchQuery}}';
+    
+    // Function to update URL with current search parameters
+    window.updateURL = function() {
+        const params = new URLSearchParams();
+        
+        const promptInput = document.querySelector('.prompt-input');
+        const modelSelect = document.querySelector('.model-select');
+        
+        if (promptInput && promptInput.value.trim() !== '') {
+            params.set('q', promptInput.value.trim());
+        }
+        
+        if (modelSelect && modelSelect.value !== 'all') {
+            params.set('model', modelSelect.value);
+        }
+        
+        if (window.currentNSFWFilter) {
+            params.set('nsfw', window.currentNSFWFilter);
+        }
+        
+        const newURL = params.toString() ? `/?${params.toString()}` : '/';
+        history.replaceState(null, '', newURL);
+    };
+    
+    // Function to initialize JavaScript state from form values (set by server)
+    window.initializeFromForm = function() {
+        // Set current search from prompt input value
+        const promptInput = document.querySelector('.prompt-input');
+        if (promptInput && promptInput.value) {
+            window.currentSearch = promptInput.value;
+        }
+        
+        // Set current model from select value
+        const modelSelect = document.querySelector('.model-select');
+        if (modelSelect) {
+            window.currentModel = modelSelect.value;
+        }
+        
+        // Set current NSFW filter from hidden field value
+        const nsfwField = document.getElementById('nsfw-filter');
+        if (nsfwField) {
+            window.currentNSFWFilter = nsfwField.value;
+        }
+    };
+    
+    // Update the image count in the header
+    window.updateImageCount = function() {
+        const countElement = document.getElementById('image-count');
+        if (countElement && typeof window.totalCount !== 'undefined') {
+            let countText = `(${window.totalCount} images)`;
+            if (window.currentSearch && window.currentSearch.trim() !== '') {
+                countText = `(${window.totalCount} results)`;
+            }
+            countElement.textContent = countText;
+        }
+    };
     
     // Toggle filter visibility with Ctrl+D
     document.addEventListener('keydown', function(event) {
@@ -144,6 +222,54 @@
             if (nsfwField && window.currentNSFWFilter) {
                 nsfwField.value = window.currentNSFWFilter;
             }
+            
+            // Capture current model selection
+            const modelSelect = document.querySelector('.model-select');
+            if (modelSelect) {
+                window.currentModel = modelSelect.value;
+            }
+        }
+    });
+    
+    // Update URL after successful HTMX requests
+    document.addEventListener('htmx:afterSettle', function(event) {
+        if (event.detail.target && (event.detail.target.id === 'image-results')) {
+            // Update URL to reflect current search state
+            window.updateURL();
+            // Rebuild lightbox image list for new search results
+            setTimeout(function() {
+                if (window.buildLightboxImageList) {
+                    window.buildLightboxImageList();
+                }
+            }, 100);
+        }
+        
+        // Also rebuild when new pages are loaded via load-more
+        if (event.detail.target && (event.detail.target.id === 'pages-container')) {
+            setTimeout(function() {
+                if (window.buildLightboxImageList) {
+                    window.buildLightboxImageList();
+                }
+            }, 100);
+        }
+    });
+    
+    // Initialize JavaScript state from form values on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        // Small delay to ensure all elements are ready
+        setTimeout(function() {
+            window.initializeFromForm();
+            // Build initial lightbox image list
+            if (window.buildLightboxImageList) {
+                window.buildLightboxImageList();
+            }
+        }, 50);
+    });
+    
+    // Rebuild lightbox image list when new pages are loaded
+    document.addEventListener('pageLoaded', function() {
+        if (window.buildLightboxImageList) {
+            window.buildLightboxImageList();
         }
     });
     
@@ -161,7 +287,8 @@
     };
     
     window.buildLightboxImageList = function() {
-        const imageCards = document.querySelectorAll('.image-card a');
+        // Get all image cards from all loaded pages (across all page-grid containers)
+        const imageCards = document.querySelectorAll('.page-grid .image-card a');
         window.lightboxImages = Array.from(imageCards).map(link => link.href);
         // Extract metadata from data attributes
         window.lightboxMetadata = Array.from(imageCards).map(link => {
@@ -197,10 +324,14 @@
         // Build/update the image list
         window.buildLightboxImageList();
         
-        // Find current image index
-        window.currentLightboxIndex = window.lightboxImages.findIndex(img => img === imageSrc);
+        // Find current image index by ID (more reliable than URL comparison)
+        window.currentLightboxIndex = window.lightboxMetadata.findIndex(meta => meta.id === id);
         if (window.currentLightboxIndex === -1) {
-            window.currentLightboxIndex = 0;
+            // Fallback to URL comparison if ID doesn't work
+            window.currentLightboxIndex = window.lightboxImages.findIndex(img => img === imageSrc);
+            if (window.currentLightboxIndex === -1) {
+                window.currentLightboxIndex = 0;
+            }
         }
         
         const lightbox = document.getElementById('lightbox');
@@ -225,8 +356,24 @@
         if (cleanModel.endsWith('.safetensors')) {
             cleanModel = cleanModel.slice(0, -12); // Remove ".safetensors"
         }
+        
+        // Split model name and version if they're combined with " - "
         const modelElement = document.getElementById('lightbox-model');
-        modelElement.textContent = cleanModel;
+        const versionElement = document.getElementById('lightbox-version');
+        
+        if (cleanModel.includes(' - ')) {
+            const parts = cleanModel.split(' - ');
+            const modelName = parts[0];
+            const versionName = parts.slice(1).join(' - '); // In case there are multiple " - " in the name
+            
+            modelElement.textContent = modelName;
+            versionElement.textContent = versionName;
+            versionElement.style.display = 'block';
+        } else {
+            modelElement.textContent = cleanModel;
+            versionElement.style.display = 'none';
+        }
+        
         modelElement.title = model || 'Unknown Model'; // Show full name on hover
         
         // Parameters
@@ -295,30 +442,46 @@
         }
     };
     
-    window.copyLightboxPrompt = function() {
-        if (!window.currentPromptData) return;
+    window.copyPositivePrompt = function() {
+        if (!window.currentPromptData || !window.currentPromptData.prompt) return;
         
-        let fullPrompt = window.currentPromptData.prompt;
-        if (window.currentPromptData.negPrompt && window.currentPromptData.negPrompt.trim() !== '') {
-            fullPrompt += '\n\nNegative prompt: ' + window.currentPromptData.negPrompt;
-        }
-        
-        navigator.clipboard.writeText(fullPrompt).then(function() {
-            // Show feedback
-            const button = document.querySelector('.lightbox-copy-btn');
-            const originalText = button.innerHTML;
-            button.innerHTML = 'Copied!';
-            button.style.backgroundColor = '#28a745';
+        navigator.clipboard.writeText(window.currentPromptData.prompt).then(function() {
+            // Show feedback on the positive prompt element
+            const promptElement = document.getElementById('lightbox-prompt');
+            const originalBg = promptElement.style.backgroundColor;
+            promptElement.style.backgroundColor = '#28a745';
+            promptElement.style.color = 'white';
             
             setTimeout(function() {
-                button.innerHTML = originalText;
-                button.style.backgroundColor = '#007bff';
-            }, 2000);
+                promptElement.style.backgroundColor = originalBg;
+                promptElement.style.color = '';
+            }, 1000);
         }).catch(function(err) {
-            console.error('Failed to copy prompt: ', err);
-            alert('Failed to copy prompt to clipboard');
+            console.error('Failed to copy positive prompt: ', err);
+            alert('Failed to copy positive prompt to clipboard');
         });
     };
+    
+    window.copyNegativePrompt = function() {
+        if (!window.currentPromptData || !window.currentPromptData.negPrompt) return;
+        
+        navigator.clipboard.writeText(window.currentPromptData.negPrompt).then(function() {
+            // Show feedback on the negative prompt element
+            const promptElement = document.getElementById('lightbox-neg-prompt');
+            const originalBg = promptElement.style.backgroundColor;
+            promptElement.style.backgroundColor = '#28a745';
+            promptElement.style.color = 'white';
+            
+            setTimeout(function() {
+                promptElement.style.backgroundColor = originalBg;
+                promptElement.style.color = '';
+            }, 1000);
+        }).catch(function(err) {
+            console.error('Failed to copy negative prompt: ', err);
+            alert('Failed to copy negative prompt to clipboard');
+        });
+    };
+    
     
     window.copyLightboxSeed = function() {
         if (!window.currentSeed) return;

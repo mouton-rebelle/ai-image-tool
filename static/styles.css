@@ -19,18 +19,46 @@ body {
     box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
 }
 
+.image-count {
+    font-size: 0.7em;
+    color: #666;
+    font-weight: normal;
+}
+
 /* Search form */
 .search-form { 
-    display: flex; 
-    gap: 10px; 
+    display: grid; 
+    grid-template-columns: 1fr auto;
+    grid-gap: 10px; 
     margin-bottom: 20px; 
 }
 
-.search-input { 
-    flex: 1; 
+.search-inputs {
+    display: grid;
+    grid-template-columns: 1fr 200px;
+    grid-gap: 10px;
+}
+
+.prompt-input { 
+    width: calc(100% - 20px); 
     padding: 10px; 
     border: 1px solid #ddd; 
     border-radius: 4px; 
+}
+
+.model-select {
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: white;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.model-select:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
 }
 
 .search-btn { 
@@ -62,7 +90,7 @@ body {
 }
 
 .image-card { 
-    width: calc(25% - 11.25px); /* 4 columns with gaps */
+    width: calc(25% - 11.25px); /* 4 columns with 15px gutter */
     margin-bottom: 15px;
     border-radius: 8px; 
     overflow: hidden; 
@@ -70,6 +98,24 @@ body {
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
+/* Responsive breakpoints for image cards */
+@media (max-width: 1200px) {
+    .image-card {
+        width: calc(33.333% - 10px); /* 3 columns */
+    }
+}
+
+@media (max-width: 900px) {
+    .image-card {
+        width: calc(50% - 7.5px); /* 2 columns */
+    }
+}
+
+@media (max-width: 600px) {
+    .image-card {
+        width: 100%; /* 1 column */
+    }
+}
 
 .image-card img {
     width: 100%;
@@ -231,10 +277,26 @@ body {
     box-sizing: border-box;
 }
 
+.lightbox-model-info {
+    margin-bottom: 15px;
+}
+
 .lightbox-metadata h3 {
-    margin: 0 0 15px 0;
+    margin: 0 0 5px 0;
     font-size: 18px;
     color: #fff;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.lightbox-version {
+    margin: 0 0 15px 0;
+    font-size: 14px;
+    color: #bbb;
+    font-style: italic;
     word-wrap: break-word;
     overflow-wrap: break-word;
     text-overflow: ellipsis;
@@ -316,6 +378,19 @@ body {
     line-height: 1.4;
     font-size: 14px;
     color: #ddd;
+}
+
+.clickable-prompt {
+    cursor: pointer;
+    transition: background-color 0.3s, color 0.3s;
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+}
+
+.clickable-prompt:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
 }
 
 .lightbox-copy-btn {

@@ -3,7 +3,7 @@
 <div class="image-grid page-grid" id="page-{{.CurrentPage}}" data-page="{{.CurrentPage}}">
 {{range .Images}}
     <div class="image-card">
-        <a href="{{if .IsNSFW}}/images_nsfw/{{else}}/images/{{end}}{{.Filename}}" 
+        <a href="{{.ImageURL}}" 
            data-image-id="{{.ID}}"
            data-model="{{.Model}}"
            data-steps="{{.Steps}}"
@@ -13,7 +13,7 @@
            data-seed="{{.Seed}}"
            data-prompt="{{.Prompt}}"
            data-neg-prompt="{{.NegPrompt}}"
-           onclick="event.preventDefault(); openLightboxFromData(this, '{{if .IsNSFW}}/images_nsfw/{{else}}/images/{{end}}{{.Filename}}'); return false;">
+           onclick="event.preventDefault(); openLightboxFromData(this, '{{.ImageURL}}'); return false;">
             <img src="/thumbnails/{{.Filename}}" alt="Image {{.ID}}">
         </a>
     </div>
@@ -25,6 +25,12 @@
 window.currentPage = {{.CurrentPage}};
 window.hasMore = {{.HasNext}};
 window.currentSearch = "{{.SearchQuery}}";
+window.totalCount = {{.TotalCount}};
+
+// Update count on page load
+if (window.updateImageCount) {
+    window.updateImageCount();
+}
 
 // Initialize Masonry for the current page
 if (window.Masonry) {
@@ -36,31 +42,30 @@ if (window.Masonry) {
         const totalImages = images.length;
         
         function initMasonry() {
-            // Get responsive column width based on screen size
-            function getColumnWidth() {
-                const columnCount = 4
-                const containerWidth = pageGrid.offsetWidth;
-                const width = (containerWidth - ((columnCount-1)*15)) / columnCount
-                console.log(width, containerWidth)
-            }
-            
             const masonryInstance = new Masonry(pageGrid, {
                 itemSelector: '.image-card',
-                columnWidth: getColumnWidth(),
                 gutter: 15,
                 fitWidth: true,
                 horizontalOrder: true
             });
             
+            // Store instance for later use
+            pageGrid._masonryInstance = masonryInstance;
+            
             // Responsive resize handler
             let resizeTimeout;
-            window.addEventListener('resize', function() {
+            function handleResize() {
                 clearTimeout(resizeTimeout);
                 resizeTimeout = setTimeout(function() {
-                    masonryInstance.options.columnWidth = getColumnWidth();
                     masonryInstance.layout();
                 }, 250);
-            });
+            }
+            
+            // Only add resize listener once
+            if (!pageGrid._resizeListenerAdded) {
+                window.addEventListener('resize', handleResize);
+                pageGrid._resizeListenerAdded = true;
+            }
         }
         
         if (totalImages === 0) {
@@ -91,9 +96,22 @@ if (!window.updateLoadMore) {
         const loadMore = document.getElementById('load-more');
         if (loadMore && window.hasMore) {
             const nextPage = window.currentPage + 1;
-            const searchParam = window.currentSearch ? `q=${encodeURIComponent(window.currentSearch)}&` : '';
-            const nsfwParam = window.currentNSFWFilter && window.currentNSFWFilter !== 'all' ? `nsfw=${window.currentNSFWFilter}&` : '';
-            const url = `/search?${searchParam}${nsfwParam}page=${nextPage}`;
+            const params = new URLSearchParams();
+            params.set('page', nextPage);
+            
+            if (window.currentSearch && window.currentSearch.trim() !== '') {
+                params.set('q', window.currentSearch);
+            }
+            
+            if (window.currentModel && window.currentModel !== 'all') {
+                params.set('model', window.currentModel);
+            }
+            
+            if (window.currentNSFWFilter && window.currentNSFWFilter !== 'all') {
+                params.set('nsfw', window.currentNSFWFilter);
+            }
+            
+            const url = params.get('q') || params.get('model') ? `/search?${params.toString()}` : `/api/images?${params.toString()}`;
             
             loadMore.setAttribute('hx-get', url);
             loadMore.setAttribute('hx-trigger', 'intersect once');
@@ -102,7 +120,7 @@ if (!window.updateLoadMore) {
             // Re-initialize HTMX for the updated element
             htmx.process(loadMore);
             
-            console.log('Load more updated for next page:', nextPage, 'URL:', url, 'Search:', window.currentSearch, 'NSFW:', window.currentNSFWFilter);
+            console.log('Load more updated for next page:', nextPage, 'URL:', url, 'Search:', window.currentSearch, 'Model:', window.currentModel, 'NSFW:', window.currentNSFWFilter);
         } else if (loadMore) {
             loadMore.style.display = 'none';
             console.log('No more pages to load');
@@ -123,6 +141,18 @@ document.addEventListener('htmx:afterRequest', function(event) {
             if (searchMatch) {
                 window.currentSearch = searchMatch[1];
                 console.log('Updated search query to:', window.currentSearch);
+            }
+            
+            // Extract total count from the response
+            const countMatch = response.match(/window\.totalCount = (\d+)/);
+            if (countMatch) {
+                window.totalCount = parseInt(countMatch[1]);
+                console.log('Updated total count to:', window.totalCount);
+                
+                // Update the count display
+                if (window.updateImageCount) {
+                    window.updateImageCount();
+                }
             }
             
             // Reset page to 1 for new search
@@ -194,7 +224,7 @@ document.addEventListener('htmx:targetError', function(event) {
 <div class="image-grid page-grid" id="page-{{.CurrentPage}}" data-page="{{.CurrentPage}}">
 {{range .Images}}
 <div class="image-card">
-    <a href="{{if .IsNSFW}}/images_nsfw/{{else}}/images/{{end}}{{.Filename}}" 
+    <a href="{{.ImageURL}}" 
        data-image-id="{{.ID}}"
        data-model="{{.Model}}"
        data-steps="{{.Steps}}"
@@ -204,7 +234,7 @@ document.addEventListener('htmx:targetError', function(event) {
        data-seed="{{.Seed}}"
        data-prompt="{{.Prompt}}"
        data-neg-prompt="{{.NegPrompt}}"
-       onclick="event.preventDefault(); openLightboxFromData(this, '{{if .IsNSFW}}/images_nsfw/{{else}}/images/{{end}}{{.Filename}}'); return false;">
+       onclick="event.preventDefault(); openLightboxFromData(this, '{{.ImageURL}}'); return false;">
         <img src="/thumbnails/{{.Filename}}" alt="Image {{.ID}}">
     </a>
 </div>
@@ -212,6 +242,7 @@ document.addEventListener('htmx:targetError', function(event) {
 </div>
 <script>
 window.hasMore = {{.HasNext}};
+window.totalCount = {{.TotalCount}};
 
 // Initialize Masonry for the current page
 if (window.Masonry) {
@@ -223,32 +254,30 @@ if (window.Masonry) {
         const totalImages = images.length;
         
         function initMasonry() {
-            // Get responsive column width based on screen size
-            function getColumnWidth() {
-                const containerWidth = pageGrid.offsetWidth;
-                if (window.innerWidth <= 600) return containerWidth; // 1 column
-                if (window.innerWidth <= 900) return containerWidth / 2; // 2 columns
-                if (window.innerWidth <= 1200) return containerWidth / 3; // 3 columns
-                return containerWidth / 4; // 4 columns
-            }
-            
             const masonryInstance = new Masonry(pageGrid, {
                 itemSelector: '.image-card',
-                columnWidth: getColumnWidth(),
                 gutter: 15,
-                fitWidth: false,
+                fitWidth: true,
                 horizontalOrder: true
             });
             
+            // Store instance for later use
+            pageGrid._masonryInstance = masonryInstance;
+            
             // Responsive resize handler
             let resizeTimeout;
-            window.addEventListener('resize', function() {
+            function handleResize() {
                 clearTimeout(resizeTimeout);
                 resizeTimeout = setTimeout(function() {
-                    masonryInstance.options.columnWidth = getColumnWidth();
                     masonryInstance.layout();
                 }, 250);
-            });
+            }
+            
+            // Only add resize listener once
+            if (!pageGrid._resizeListenerAdded) {
+                window.addEventListener('resize', handleResize);
+                pageGrid._resizeListenerAdded = true;
+            }
         }
         
         if (totalImages === 0) {

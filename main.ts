@@ -110,21 +110,8 @@ const downloadImage = async (url: string, filename: string, isNsfw: boolean): Pr
   }
 };
 
-// Function to check if image already exists
-// const imageExists = async (filename: string, isNsfw: boolean): Promise<boolean> => {
-//   try {
-//     const directory = isNsfw ? 'images_nsfw' : 'images';
-//     await Deno.stat(`${directory}/${filename}`);
-//     return true;
-//   } catch {
-//     return false;
-//   }
-// };
-
 const imageExists = async (filename: string, isNsfw: boolean): Promise<boolean> => {
   try {
-    if (isNsfw)
-      await Deno.rename(`images/${filename}`, `images_nsfw/${filename}`);
     const directory = isNsfw ? 'images_nsfw' : 'images';
     await Deno.stat(`${directory}/${filename}`);
     return true;
