@@ -145,8 +145,14 @@ func main() {
 		fmt.Println("Configuration for Import:")
 		fmt.Println("  1. Create civitai.config file (copy from civitai.config.example)")
 		fmt.Println("  2. Or use environment variables:")
-		fmt.Println("     CIVITAI_TOKEN    # API token (optional, for higher rate limits)")
-		fmt.Println("     CIVITAI_USERNAME # Username to fetch from (default: moutonrebelle)")
+		fmt.Println("     CIVITAI_TOKEN           # API token (optional, for higher rate limits)")
+		fmt.Println("     CIVITAI_USERNAME        # Username to fetch from (default: moutonrebelle)")
+		fmt.Println("     AUTO_IMPORT_ON_STARTUP  # Enable auto-import on startup (true/false)")
+		fmt.Println("")
+		fmt.Println("  Auto-import feature:")
+		fmt.Println("    When AUTO_IMPORT_ON_STARTUP=true, the app will check for new images")
+		fmt.Println("    on startup and stop as soon as it finds an already-imported image.")
+		fmt.Println("    This keeps your collection up-to-date without re-downloading everything.")
 		fmt.Println("")
 		fmt.Println("  Note: Sort order is fixed to 'Newest', Period is fixed to 'AllTime'")
 		fmt.Println("        Content includes all images (both SFW and NSFW)")
@@ -183,6 +189,11 @@ func main() {
 		}
 		fmt.Println("Civitai import completed successfully.")
 		os.Exit(0)
+	}
+
+	// Check for new Civitai images on startup if auto-import is enabled
+	if err := app.checkForNewCivitaiImages(); err != nil {
+		log.Printf("Warning: Auto-import failed: %v", err)
 	}
 
 	// Process images and create thumbnails

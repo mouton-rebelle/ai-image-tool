@@ -8,4 +8,8 @@ CIVITAI_TOKEN=your_token_here
 # Required: Username to fetch images from
 CIVITAI_USERNAME=your_username
 
+# Optional: Enable automatic import on startup (true/false)
+# When enabled, the app will check for new images on startup and stop as soon as it finds an already-imported image
+AUTO_IMPORT_ON_STARTUP=false
+
 # Note: Import will fetch all images (both SFW and NSFW)

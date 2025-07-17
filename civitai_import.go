@@ -47,8 +47,9 @@ type CivitaiImage struct {
 
 // ImportConfig holds the configuration for Civitai import
 type ImportConfig struct {
-	Token    string
-	Username string
+	Token              string
+	Username           string
+	AutoImportOnStartup bool
 }
 
 // getImportConfig reads configuration from config file or environment variables
@@ -60,8 +61,9 @@ func getImportConfig() *ImportConfig {
 	
 	// Fallback to environment variables
 	config := &ImportConfig{
-		Token:    os.Getenv("CIVITAI_TOKEN"),
-		Username: getEnvOrDefault("CIVITAI_USERNAME", "moutonrebelle"),
+		Token:              os.Getenv("CIVITAI_TOKEN"),
+		Username:           getEnvOrDefault("CIVITAI_USERNAME", "moutonrebelle"),
+		AutoImportOnStartup: getEnvOrDefault("AUTO_IMPORT_ON_STARTUP", "false") == "true",
 	}
 	return config
 }
@@ -109,6 +111,8 @@ func loadConfigFromFile() *ImportConfig {
 			config.Token = value
 		case "CIVITAI_USERNAME":
 			config.Username = value
+		case "AUTO_IMPORT_ON_STARTUP":
+			config.AutoImportOnStartup = strings.ToLower(value) == "true"
 		}
 	}
 
@@ -123,6 +127,11 @@ func loadConfigFromFile() *ImportConfig {
 // importFromCivitai downloads images and prompts from Civitai API
 func (app *App) importFromCivitai() error {
 	config := getImportConfig()
+	
+	// Validate configuration
+	if config.Username == "" {
+		return fmt.Errorf("CIVITAI_USERNAME is required for import")
+	}
 	
 	fmt.Printf("Starting Civitai import with config:\n")
 	fmt.Printf("  Username: %s\n", config.Username)
@@ -151,17 +160,17 @@ func (app *App) importFromCivitai() error {
 	var sfwPromptsFile, nsfwPromptsFile *os.File
 	var err error
 
-	// Create or truncate prompts_sfw.txt
-	sfwPromptsFile, err = os.Create("prompts_sfw.txt")
+	// Open prompts files in append mode (or create if they don't exist)
+	sfwPromptsFile, err = os.OpenFile("prompts_sfw.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to create prompts_sfw.txt: %v", err)
+		return fmt.Errorf("failed to open prompts_sfw.txt: %v", err)
 	}
 	defer sfwPromptsFile.Close()
 
-	// Create or truncate prompts_nsfw.txt
-	nsfwPromptsFile, err = os.Create("prompts_nsfw.txt")
+	// Open prompts files in append mode (or create if they don't exist)
+	nsfwPromptsFile, err = os.OpenFile("prompts_nsfw.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to create prompts_nsfw.txt: %v", err)
+		return fmt.Errorf("failed to open prompts_nsfw.txt: %v", err)
 	}
 	defer nsfwPromptsFile.Close()
 
@@ -411,4 +420,132 @@ func cleanPrompt(prompt string, excludedWords []string) string {
 	cleaned = strings.TrimSpace(cleaned)
 
 	return cleaned
+}
+
+// checkForNewCivitaiImages checks for new images on startup and stops as soon as it finds an already-imported image
+func (app *App) checkForNewCivitaiImages() error {
+	config := getImportConfig()
+	
+	// Check if auto-import is enabled
+	if !config.AutoImportOnStartup {
+		return nil
+	}
+	
+	// Validate configuration
+	if config.Username == "" {
+		fmt.Println("Auto-import skipped: CIVITAI_USERNAME not configured")
+		return nil
+	}
+	
+	fmt.Printf("Checking for new Civitai images for user: %s\n", config.Username)
+	
+	// Create directories if they don't exist
+	if err := os.MkdirAll("images", 0755); err != nil {
+		return fmt.Errorf("failed to create images directory: %v", err)
+	}
+	if err := os.MkdirAll("images_nsfw", 0755); err != nil {
+		return fmt.Errorf("failed to create images_nsfw directory: %v", err)
+	}
+	
+	// Initialize prompt tracking for both SFW and NSFW
+	sfwPrompts := make(map[string]bool)
+	nsfwPrompts := make(map[string]bool)
+	
+	// Open prompt files in append mode
+	sfwPromptsFile, err := os.OpenFile("prompts_sfw.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open prompts_sfw.txt: %v", err)
+	}
+	defer sfwPromptsFile.Close()
+	
+	nsfwPromptsFile, err := os.OpenFile("prompts_nsfw.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open prompts_nsfw.txt: %v", err)
+	}
+	defer nsfwPromptsFile.Close()
+	
+	// Load excluded words
+	excludedWords := loadExcludedWords()
+	
+	// Fetch first page of images
+	images, _, err := app.fetchCivitaiImages(config, "")
+	if err != nil {
+		return fmt.Errorf("failed to fetch images: %v", err)
+	}
+	
+	if len(images) == 0 {
+		fmt.Println("No new images found.")
+		return nil
+	}
+	
+	newImagesCount := 0
+	
+	// Process each image until we find one that already exists
+	for _, img := range images {
+		// Check if image already exists
+		ext := filepath.Ext(img.URL)
+		if ext == "" {
+			ext = ".jpg"
+		}
+		
+		dir := "images"
+		if img.NSFW {
+			dir = "images_nsfw"
+		}
+		
+		filename := fmt.Sprintf("%d%s", img.ID, ext)
+		filepath := filepath.Join(dir, filename)
+		
+		// If file exists, we've reached already-imported content - stop here
+		if _, err := os.Stat(filepath); err == nil {
+			fmt.Printf("Reached already-imported image %d, stopping auto-import\n", img.ID)
+			break
+		}
+		
+		// Download new image
+		downloaded, err := app.downloadImage(img)
+		if err != nil {
+			fmt.Printf("Error downloading image %d: %v\n", img.ID, err)
+			continue
+		}
+		
+		if downloaded {
+			newImagesCount++
+			fmt.Printf("Downloaded new image %d\n", img.ID)
+			
+			// Process prompts
+			if img.Meta.Prompt != "" || img.Meta.NegPrompt != "" {
+				cleanedPrompt := cleanPrompt(img.Meta.Prompt, excludedWords)
+				cleanedNegPrompt := cleanPrompt(img.Meta.NegPrompt, excludedWords)
+				
+				if cleanedPrompt != "" { // Only save if positive prompt exists after cleaning
+					promptPair := cleanedPrompt + "|||" + cleanedNegPrompt
+					
+					if img.NSFW {
+						// NSFW image - write to NSFW prompts file
+						if !nsfwPrompts[promptPair] {
+							nsfwPrompts[promptPair] = true
+							nsfwPromptsFile.WriteString(promptPair + "\n")
+						}
+					} else {
+						// SFW image - write to SFW prompts file
+						if !sfwPrompts[promptPair] {
+							sfwPrompts[promptPair] = true
+							sfwPromptsFile.WriteString(promptPair + "\n")
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	if newImagesCount > 0 {
+		fmt.Printf("Auto-import completed: %d new images downloaded\n", newImagesCount)
+		fmt.Printf("New SFW prompts: %d\n", len(sfwPrompts))
+		fmt.Printf("New NSFW prompts: %d\n", len(nsfwPrompts))
+	} else {
+		fmt.Println("No new images found during auto-import")
+	}
+	
+	return nil
 }
