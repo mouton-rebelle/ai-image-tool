@@ -3,29 +3,32 @@ body {
     font-family: Arial, sans-serif; 
     margin: 0; 
     padding: 0; 
-    background: #f5f5f5; 
+    background: #16253c; 
 }
 
 .container { 
     max-width: 1200px; 
     margin: 0 auto; 
     padding: 0 20px;
-    padding-top: 180px; /* Space for fixed header */
+    padding-top: 130px; /* Space for fixed header */
 }
 
 .header { 
     background: white; 
-    padding: 20px; 
-    border-radius: 0 0 8px 8px; 
     box-shadow: 0 2px 8px rgba(0,0,0,0.15); 
     position: fixed;
+    padding: 20px;
     top: 0;
-    left: 50%;
-    transform: translateX(-50%);
+    left: 0;
+    right:0;
     z-index: 100;
-    width: 100%;
-    max-width: 1200px;
-    box-sizing: border-box;
+    h1 {
+        color: deeppink;
+        margin:0;
+        font-size: 18px;
+        font-weight: 500;
+        margin-bottom: 4px;
+    }
 }
 
 .image-count {
@@ -39,7 +42,6 @@ body {
     display: grid; 
     grid-template-columns: 1fr auto;
     grid-gap: 10px; 
-    margin-bottom: 20px; 
 }
 
 .search-actions {
@@ -78,7 +80,7 @@ body {
 
 .search-btn { 
     padding: 10px 20px; 
-    background: #007bff; 
+    background: deeppink; 
     color: white; 
     border: none; 
     border-radius: 4px; 
@@ -96,8 +98,6 @@ body {
     border-radius: 4px;
     cursor: pointer;
     padding: 10px 12px;
-    font-size: 16px;
-    font-weight: bold;
     transition: background-color 0.3s;
 }
 
@@ -118,6 +118,7 @@ body {
 
 .image-grid { 
     width: 100%;
+    margin: 0 auto;
 }
 
 .page-grid {
@@ -127,7 +128,7 @@ body {
 }
 
 .image-card { 
-    width: calc(25% - 11.25px); /* 4 columns with 15px gutter */
+    /* Width will be set dynamically by JavaScript */
     margin-bottom: 15px;
     border-radius: 8px; 
     overflow: hidden; 
@@ -135,28 +136,9 @@ body {
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-/* Responsive breakpoints for image cards */
-@media (max-width: 1200px) {
-    .image-card {
-        width: calc(33.333% - 10px); /* 3 columns */
-    }
-}
+/* Responsive breakpoints for layout (not image cards) */
 
-@media (max-width: 900px) {
-    .image-card {
-        width: calc(50% - 7.5px); /* 2 columns */
-    }
-    
-    .container {
-        padding-top: 200px; /* More space for mobile header */
-    }
-}
-
-@media (max-width: 600px) {
-    .image-card {
-        width: 100%; /* 1 column */
-    }
-    
+@media (max-width: 800px) {
     .container {
         padding: 0 10px;
         padding-top: 220px; /* More space for mobile header */

@@ -33,61 +33,11 @@ if (window.updateImageCount) {
     window.updateImageCount();
 }
 
-// Initialize Masonry for the current page
-if (window.Masonry) {
+// Initialize Masonry for the current page using global manager
+if (window.MasonryManager) {
     const pageGrid = document.getElementById('page-{{.CurrentPage}}');
     if (pageGrid) {
-        // Wait for images to load before initializing masonry
-        const images = pageGrid.querySelectorAll('img');
-        let loadedCount = 0;
-        const totalImages = images.length;
-        
-        function initMasonry() {
-            const masonryInstance = new Masonry(pageGrid, {
-                itemSelector: '.image-card',
-                gutter: 15,
-                fitWidth: true,
-                horizontalOrder: true
-            });
-            
-            // Store instance for later use
-            pageGrid._masonryInstance = masonryInstance;
-            
-            // Responsive resize handler
-            let resizeTimeout;
-            function handleResize() {
-                clearTimeout(resizeTimeout);
-                resizeTimeout = setTimeout(function() {
-                    masonryInstance.layout();
-                }, 250);
-            }
-            
-            // Only add resize listener once
-            if (!pageGrid._resizeListenerAdded) {
-                window.addEventListener('resize', handleResize);
-                pageGrid._resizeListenerAdded = true;
-            }
-        }
-        
-        if (totalImages === 0) {
-            initMasonry();
-        } else {
-            images.forEach(img => {
-                if (img.complete) {
-                    loadedCount++;
-                    if (loadedCount === totalImages) {
-                        initMasonry();
-                    }
-                } else {
-                    img.addEventListener('load', () => {
-                        loadedCount++;
-                        if (loadedCount === totalImages) {
-                            initMasonry();
-                        }
-                    });
-                }
-            });
-        }
+        window.MasonryManager.initializeGrid(pageGrid);
     }
 }
 
@@ -246,61 +196,11 @@ document.addEventListener('htmx:targetError', function(event) {
 window.hasMore = {{.HasNext}};
 window.totalCount = {{.TotalCount}};
 
-// Initialize Masonry for the current page
-if (window.Masonry) {
+// Initialize Masonry for the current page using global manager
+if (window.MasonryManager) {
     const pageGrid = document.getElementById('page-{{.CurrentPage}}');
     if (pageGrid) {
-        // Wait for images to load before initializing masonry
-        const images = pageGrid.querySelectorAll('img');
-        let loadedCount = 0;
-        const totalImages = images.length;
-        
-        function initMasonry() {
-            const masonryInstance = new Masonry(pageGrid, {
-                itemSelector: '.image-card',
-                gutter: 15,
-                fitWidth: true,
-                horizontalOrder: true
-            });
-            
-            // Store instance for later use
-            pageGrid._masonryInstance = masonryInstance;
-            
-            // Responsive resize handler
-            let resizeTimeout;
-            function handleResize() {
-                clearTimeout(resizeTimeout);
-                resizeTimeout = setTimeout(function() {
-                    masonryInstance.layout();
-                }, 250);
-            }
-            
-            // Only add resize listener once
-            if (!pageGrid._resizeListenerAdded) {
-                window.addEventListener('resize', handleResize);
-                pageGrid._resizeListenerAdded = true;
-            }
-        }
-        
-        if (totalImages === 0) {
-            initMasonry();
-        } else {
-            images.forEach(img => {
-                if (img.complete) {
-                    loadedCount++;
-                    if (loadedCount === totalImages) {
-                        initMasonry();
-                    }
-                } else {
-                    img.addEventListener('load', () => {
-                        loadedCount++;
-                        if (loadedCount === totalImages) {
-                            initMasonry();
-                        }
-                    });
-                }
-            });
-        }
+        window.MasonryManager.initializeGrid(pageGrid);
     }
 }
 

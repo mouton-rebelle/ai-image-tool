@@ -46,7 +46,10 @@ deno lint
 # Install dependencies
 go mod tidy
 
-# Run the web server
+# Run the web server (development with auto-restart)
+air
+
+# Run the web server (manual)
 go run main.go
 
 # Build for production

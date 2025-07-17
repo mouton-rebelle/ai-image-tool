@@ -665,6 +665,139 @@
             }
         }
     });
+    
+    // Global Masonry Manager for responsive behavior
+    window.MasonryManager = (function() {
+        const instances = new Map();
+        const GUTTER = 15;
+        const MIN_COLUMN_WIDTH = 250;
+        let globalResizeTimeout;
+        let resizeObserver;
+        
+        // Calculate optimal column width based on container width
+        function calculateColumnWidth(containerWidth) {
+            // Use the full container width without subtracting padding
+            const availableWidth = containerWidth;
+            const columns = Math.max(1, Math.floor((availableWidth + GUTTER) / (MIN_COLUMN_WIDTH + GUTTER)));
+            const columnWidth = Math.floor((availableWidth - (GUTTER * (columns - 1))) / columns);
+            return { columnWidth, columns };
+        }
+        
+        // Set dynamic column widths for image cards
+        function setColumnWidths(grid, columnWidth) {
+            const cards = grid.querySelectorAll('.image-card');
+            cards.forEach(card => {
+                card.style.width = columnWidth + 'px';
+            });
+        }
+        
+        // Initialize masonry for a grid
+        function initializeGrid(grid) {
+            if (!grid || instances.has(grid)) return;
+            
+            // Get the actual grid container width, fallback to parent if needed
+            let containerWidth = grid.getBoundingClientRect().width;
+            if (containerWidth === 0) {
+                containerWidth = grid.parentElement.getBoundingClientRect().width;
+            }
+            
+            const { columnWidth } = calculateColumnWidth(containerWidth);
+            
+            // Set column widths
+            setColumnWidths(grid, columnWidth);
+            
+            // Wait for images to load
+            const images = grid.querySelectorAll('img');
+            let loadedCount = 0;
+            const totalImages = images.length;
+            
+            function createMasonryInstance() {
+                // Ensure grid uses full width
+                grid.style.width = '100%';
+                
+                const instance = new Masonry(grid, {
+                    itemSelector: '.image-card',
+                    gutter: GUTTER,
+                    horizontalOrder: true,
+                    containerStyle: { position: 'relative', width: '100%' }
+                });
+                
+                instances.set(grid, instance);
+                
+                // Set up resize observer for this grid if not already done
+                if (!resizeObserver) {
+                    setupResizeObserver();
+                }
+                
+                return instance;
+            }
+            
+            if (totalImages === 0) {
+                createMasonryInstance();
+            } else {
+                images.forEach(img => {
+                    if (img.complete) {
+                        loadedCount++;
+                        if (loadedCount === totalImages) {
+                            createMasonryInstance();
+                        }
+                    } else {
+                        img.addEventListener('load', () => {
+                            loadedCount++;
+                            if (loadedCount === totalImages) {
+                                createMasonryInstance();
+                            }
+                        });
+                    }
+                });
+            }
+        }
+        
+        // Handle resize with debouncing
+        function handleResize() {
+            clearTimeout(globalResizeTimeout);
+            globalResizeTimeout = setTimeout(() => {
+                instances.forEach((instance, grid) => {
+                    if (document.contains(grid)) {
+                        // Get the actual grid container width, fallback to parent if needed
+                        let containerWidth = grid.getBoundingClientRect().width;
+                        if (containerWidth === 0) {
+                            containerWidth = grid.parentElement.getBoundingClientRect().width;
+                        }
+                        
+                        const { columnWidth } = calculateColumnWidth(containerWidth);
+                        
+                        // Update column widths
+                        setColumnWidths(grid, columnWidth);
+                        
+                        // Relayout masonry
+                        instance.layout();
+                    } else {
+                        // Clean up removed grids
+                        instances.delete(grid);
+                    }
+                });
+            }, 250);
+        }
+        
+        // Set up ResizeObserver for better performance
+        function setupResizeObserver() {
+            if (window.ResizeObserver) {
+                resizeObserver = new ResizeObserver(handleResize);
+                resizeObserver.observe(document.body);
+            } else {
+                // Fallback to window resize
+                window.addEventListener('resize', handleResize);
+            }
+        }
+        
+        // Public API
+        return {
+            initializeGrid: initializeGrid,
+            handleResize: handleResize,
+            instances: instances
+        };
+    })();
     </script>
 </body>
 </html>
