@@ -624,11 +624,21 @@
         nextBtn.style.cursor = window.currentLightboxIndex < window.lightboxImages.length - 1 ? 'pointer' : 'default';
     };
     
-    // Close lightbox on click outside image
+    // Close lightbox on click outside content
     document.getElementById('lightbox').addEventListener('click', function(e) {
-        if (e.target === this) {
+        // Close if clicking on the lightbox backdrop or the content container (but not its children)
+        if (e.target === this || e.target.classList.contains('lightbox-content')) {
             closeLightbox();
         }
+    });
+    
+    // Prevent clicks on image and metadata from closing lightbox
+    document.getElementById('lightbox-img').addEventListener('click', function(e) {
+        e.stopPropagation();
+    });
+    
+    document.querySelector('.lightbox-metadata').addEventListener('click', function(e) {
+        e.stopPropagation();
     });
     
     // Close lightbox with X button

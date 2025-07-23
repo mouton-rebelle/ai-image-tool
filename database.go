@@ -223,7 +223,18 @@ func (app *App) insertImageMetadata(metadata *ImageMetadata) error {
 		metadata.IsNSFW,
 	)
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Append prompt to appropriate file
+	excludedWords := loadExcludedWords()
+	if err := appendPromptToFile(metadata.Prompt, metadata.NegPrompt, metadata.IsNSFW, excludedWords); err != nil {
+		// Log error but don't fail - prompt file writing is not critical
+		fmt.Printf("Warning: Failed to append prompt to file: %v\n", err)
+	}
+
+	return nil
 }
 
 type LoraData struct {

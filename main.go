@@ -201,6 +201,11 @@ func main() {
 		log.Fatal("Failed to process images:", err)
 	}
 
+	// Deduplicate prompt files after processing all images
+	if err := deduplicatePromptFiles(); err != nil {
+		log.Printf("Warning: Failed to deduplicate prompt files: %v", err)
+	}
+
 	// Start HTTP server
 	router := mux.NewRouter()
 	app.setupRoutes(router)
@@ -246,9 +251,9 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Default to ALL filter if not specified (to preserve existing behavior)
+	// Default to SFW filter if not specified
 	if nsfwFilter == "" {
-		nsfwFilter = "all"
+		nsfwFilter = "sfw"
 	}
 
 	// Get total count based on current filters

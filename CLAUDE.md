@@ -84,8 +84,10 @@ Single-file architecture with TypeScript interfaces:
   - Prompt cleaning and filtering functionality
   - Image download with ID-based naming
 - Output files:
-  - `prompts.txt`: Text file with unique, cleaned prompt pairs (positive|||negative format)
-  - `images/`: Directory containing downloaded images with ID-based filenames
+  - `prompts_sfw.txt`: Text file with unique, cleaned SFW prompt pairs (positive|||negative format)
+  - `prompts_nsfw.txt`: Text file with unique, cleaned NSFW prompt pairs (positive|||negative format)
+  - `images/`: Directory containing downloaded SFW images with ID-based filenames
+  - `images_nsfw/`: Directory containing downloaded NSFW images with ID-based filenames
 - Supporting files:
   - `excluded_words.txt`: Comma-separated list of words to exclude from prompts
 
@@ -122,7 +124,7 @@ HTTP server with SQLite backend:
 
 - **Pagination**: Web interface uses 300 items per page with infinite scroll
 - **Data Collection**: Fetches all available images (100 items per API page)
-- **Data Deduplication**: Uses Set for unique prompt collection
+- **Data Deduplication**: Prompt files are deduplicated after all images are processed on startup
 - **Error Handling**: Comprehensive error handling with meaningful messages
 - **Rate Limiting**: Built-in delays between requests to respect API limits
 - **Type Safety**: Full TypeScript interfaces for API responses
@@ -148,6 +150,8 @@ The application integrates with Civitai's REST API v1:
 3. **Text Normalization**: Cleans whitespace, removes newlines, and deduplicates prompt pairs
 4. **Prompt Pairing**: Combines positive and negative prompts using `|||` separator
 5. **Quality Control**: Filters out pairs where positive prompt is empty after cleaning (negative can be empty)
+6. **Database Integration**: Prompts are written to files when images are inserted into the database (both local and Civitai images)
+7. **Startup Deduplication**: After all images are processed on startup, prompt files are deduplicated to ensure uniqueness
 
 ## Image Download Features
 

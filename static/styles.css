@@ -131,9 +131,10 @@ body {
     /* Width will be set dynamically by JavaScript */
     margin-bottom: 15px;
     border-radius: 8px; 
-    overflow: hidden; 
+    overflow: hidden;
+    outline:2px solid rgba(255,255,255,0); 
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, outline 0.2s ease-in-out;
 }
 
 /* Responsive breakpoints for layout (not image cards) */
@@ -171,8 +172,9 @@ body {
 }
 
 .image-card:hover {
-    transform: translateY(-2px);
+    transform: translateY(-4px);
     box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    outline: 2px solid rgba(255,255,255,0.7);
 }
 
 /* Loading and utility */

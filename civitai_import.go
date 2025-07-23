@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -154,26 +153,6 @@ func (app *App) importFromCivitai() error {
 		return fmt.Errorf("failed to create images_nsfw directory: %v", err)
 	}
 
-	// Initialize prompt tracking for both SFW and NSFW
-	sfwPrompts := make(map[string]bool)
-	nsfwPrompts := make(map[string]bool)
-	var sfwPromptsFile, nsfwPromptsFile *os.File
-	var err error
-
-	// Open prompts files in append mode (or create if they don't exist)
-	sfwPromptsFile, err = os.OpenFile("prompts_sfw.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open prompts_sfw.txt: %v", err)
-	}
-	defer sfwPromptsFile.Close()
-
-	// Open prompts files in append mode (or create if they don't exist)
-	nsfwPromptsFile, err = os.OpenFile("prompts_nsfw.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open prompts_nsfw.txt: %v", err)
-	}
-	defer nsfwPromptsFile.Close()
-
 	// Load excluded words
 	excludedWords := loadExcludedWords()
 	fmt.Printf("Loaded %d excluded words\n", len(excludedWords))
@@ -218,29 +197,6 @@ func (app *App) importFromCivitai() error {
 				fmt.Printf("  Skipped image %d (already exists)\n", img.ID)
 			}
 
-			// Process prompts - separate by NSFW status
-			if img.Meta.Prompt != "" || img.Meta.NegPrompt != "" {
-				cleanedPrompt := cleanPrompt(img.Meta.Prompt, excludedWords)
-				cleanedNegPrompt := cleanPrompt(img.Meta.NegPrompt, excludedWords)
-
-				if cleanedPrompt != "" { // Only save if positive prompt exists after cleaning
-					promptPair := cleanedPrompt + "|||" + cleanedNegPrompt
-					
-					if img.NSFW {
-						// NSFW image - write to NSFW prompts file
-						if !nsfwPrompts[promptPair] {
-							nsfwPrompts[promptPair] = true
-							nsfwPromptsFile.WriteString(promptPair + "\n")
-						}
-					} else {
-						// SFW image - write to SFW prompts file
-						if !sfwPrompts[promptPair] {
-							sfwPrompts[promptPair] = true
-							sfwPromptsFile.WriteString(promptPair + "\n")
-						}
-					}
-				}
-			}
 		}
 
 		// Check if we have more pages
@@ -259,10 +215,6 @@ func (app *App) importFromCivitai() error {
 	fmt.Printf("\n=== Import Summary ===\n")
 	fmt.Printf("Total images processed: %d\n", totalImages)
 	fmt.Printf("Total images downloaded: %d\n", totalDownloaded)
-	fmt.Printf("Unique SFW prompt pairs saved: %d\n", len(sfwPrompts))
-	fmt.Printf("Unique NSFW prompt pairs saved: %d\n", len(nsfwPrompts))
-	fmt.Printf("SFW prompts saved to: prompts_sfw.txt\n")
-	fmt.Printf("NSFW prompts saved to: prompts_nsfw.txt\n")
 
 	return nil
 }
@@ -366,61 +318,6 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 	return true, nil
 }
 
-// loadExcludedWords loads the excluded words from excluded_words.txt
-func loadExcludedWords() []string {
-	file, err := os.Open("excluded_words.txt")
-	if err != nil {
-		fmt.Printf("Warning: Could not open excluded_words.txt: %v\n", err)
-		return []string{}
-	}
-	defer file.Close()
-
-	content, err := io.ReadAll(file)
-	if err != nil {
-		fmt.Printf("Warning: Could not read excluded_words.txt: %v\n", err)
-		return []string{}
-	}
-
-	words := strings.Split(string(content), ",")
-	var cleanWords []string
-	for _, word := range words {
-		word = strings.TrimSpace(word)
-		if word != "" {
-			cleanWords = append(cleanWords, word)
-		}
-	}
-
-	return cleanWords
-}
-
-// cleanPrompt removes LoRA tags and excluded words from a prompt
-func cleanPrompt(prompt string, excludedWords []string) string {
-	if prompt == "" {
-		return ""
-	}
-
-	// Remove LoRA tags
-	loraRegex := regexp.MustCompile(`<lora:[^>]+>`)
-	cleaned := loraRegex.ReplaceAllString(prompt, "")
-
-	// Remove excluded words
-	for _, word := range excludedWords {
-		if word != "" {
-			// Case-insensitive replacement
-			regex := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(word) + `\b`)
-			cleaned = regex.ReplaceAllString(cleaned, "")
-		}
-	}
-
-	// Clean up extra spaces and commas
-	cleaned = regexp.MustCompile(`\s*,\s*,\s*`).ReplaceAllString(cleaned, ", ")
-	cleaned = regexp.MustCompile(`^\s*,\s*`).ReplaceAllString(cleaned, "")
-	cleaned = regexp.MustCompile(`\s*,\s*$`).ReplaceAllString(cleaned, "")
-	cleaned = regexp.MustCompile(`\s+`).ReplaceAllString(cleaned, " ")
-	cleaned = strings.TrimSpace(cleaned)
-
-	return cleaned
-}
 
 // checkForNewCivitaiImages checks for new images on startup and stops as soon as it finds an already-imported image
 func (app *App) checkForNewCivitaiImages() error {
@@ -447,25 +344,9 @@ func (app *App) checkForNewCivitaiImages() error {
 		return fmt.Errorf("failed to create images_nsfw directory: %v", err)
 	}
 	
-	// Initialize prompt tracking for both SFW and NSFW
-	sfwPrompts := make(map[string]bool)
-	nsfwPrompts := make(map[string]bool)
-	
-	// Open prompt files in append mode
-	sfwPromptsFile, err := os.OpenFile("prompts_sfw.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open prompts_sfw.txt: %v", err)
-	}
-	defer sfwPromptsFile.Close()
-	
-	nsfwPromptsFile, err := os.OpenFile("prompts_nsfw.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open prompts_nsfw.txt: %v", err)
-	}
-	defer nsfwPromptsFile.Close()
-	
 	// Load excluded words
 	excludedWords := loadExcludedWords()
+	_ = excludedWords // Will be used by database insertion
 	
 	// Fetch first page of images
 	images, _, err := app.fetchCivitaiImages(config, "")
@@ -513,36 +394,11 @@ func (app *App) checkForNewCivitaiImages() error {
 			newImagesCount++
 			fmt.Printf("Downloaded new image %d\n", img.ID)
 			
-			// Process prompts
-			if img.Meta.Prompt != "" || img.Meta.NegPrompt != "" {
-				cleanedPrompt := cleanPrompt(img.Meta.Prompt, excludedWords)
-				cleanedNegPrompt := cleanPrompt(img.Meta.NegPrompt, excludedWords)
-				
-				if cleanedPrompt != "" { // Only save if positive prompt exists after cleaning
-					promptPair := cleanedPrompt + "|||" + cleanedNegPrompt
-					
-					if img.NSFW {
-						// NSFW image - write to NSFW prompts file
-						if !nsfwPrompts[promptPair] {
-							nsfwPrompts[promptPair] = true
-							nsfwPromptsFile.WriteString(promptPair + "\n")
-						}
-					} else {
-						// SFW image - write to SFW prompts file
-						if !sfwPrompts[promptPair] {
-							sfwPrompts[promptPair] = true
-							sfwPromptsFile.WriteString(promptPair + "\n")
-						}
-					}
-				}
-			}
 		}
 	}
 	
 	if newImagesCount > 0 {
 		fmt.Printf("Auto-import completed: %d new images downloaded\n", newImagesCount)
-		fmt.Printf("New SFW prompts: %d\n", len(sfwPrompts))
-		fmt.Printf("New NSFW prompts: %d\n", len(nsfwPrompts))
 	} else {
 		fmt.Println("No new images found during auto-import")
 	}
