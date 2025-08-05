@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nfnt/resize"
 	"github.com/rwcarlsen/goexif/exif"
@@ -151,6 +152,9 @@ func (app *App) extractImageMetadata(imagePath string, isNSFW bool) (*ImageMetad
 		IsNSFW:   isNSFW,
 	}
 
+	// Calculate display timestamp for chronological ordering
+	metadata.DisplayTimestamp = calculateDisplayTimestamp(imagePath, id, filename)
+
 	// Try to extract EXIF data (this might contain generation parameters)
 	file.Seek(0, 0) // Reset file pointer
 	exifData, err := exif.Decode(file)
@@ -278,4 +282,30 @@ func (img *ImageMetadata) SetImageURL() {
 	} else {
 		img.ImageURL = "/images/" + img.Filename
 	}
+}
+
+// calculateDisplayTimestamp computes a chronological timestamp for the image
+func calculateDisplayTimestamp(imagePath string, imageID int, filename string) *time.Time {
+	// Method 1: For Civitai images (numeric filenames), use ID-based timestamp
+	idStr := strings.Split(filename, ".")[0]
+	if civitaiID, err := strconv.Atoi(idStr); err == nil {
+		// Civitai IDs are roughly chronological
+		// Use a base date (e.g., Jan 1, 2020) and add seconds based on ID
+		// This is an approximation, but provides better ordering than processing time
+		baseDate := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+		// Scale the ID to spread over time (divide by large factor to get reasonable timeline)
+		timestampOffset := time.Duration(civitaiID/100) * time.Second
+		displayTime := baseDate.Add(timestampOffset)
+		return &displayTime
+	}
+
+	// Method 2: For local images, use file modification time
+	if fileInfo, err := os.Stat(imagePath); err == nil {
+		modTime := fileInfo.ModTime()
+		return &modTime
+	}
+
+	// Method 3: Fallback to current time
+	now := time.Now()
+	return &now
 }

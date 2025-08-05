@@ -67,6 +67,17 @@ CIVITAI_USERNAME=username ./ai-generated-image-viewer -import-civitai
 
 # Access web interface
 open http://localhost:8081
+
+# Network access (accessible from other devices on local network)
+# Default: binds to 0.0.0.0:8081 for network access
+./ai-generated-image-viewer
+# Then access from any device: http://192.168.1.78:8081 (replace with your IP)
+
+# Localhost only (more secure)
+HOST=127.0.0.1 ./ai-generated-image-viewer
+
+# Custom port
+PORT=8080 ./ai-generated-image-viewer
 ```
 
 ## Architecture
@@ -114,6 +125,11 @@ HTTP server with SQLite backend:
 
 ## Environment Variables
 
+### Server Configuration
+- `HOST`: Host/IP address to bind to (default: "0.0.0.0" for network access, use "127.0.0.1" for localhost only)
+- `PORT`: Port to listen on (default: "8081")
+
+### Civitai API Configuration  
 - `CIVITAI_TOKEN`: API token for Civitai API authentication (optional but recommended for higher rate limits)
 - `CIVITAI_USERNAME`: Target username to fetch images from (default: "moutonrebelle")
 - `CIVITAI_SORT`: Sort order for images (default: "Most Reactions", options: "Most Recent", "Most Reactions", "Most Comments", "Most Liked")

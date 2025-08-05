@@ -79,6 +79,11 @@
                         <p id="lightbox-neg-prompt" class="clickable-prompt" onclick="copyNegativePrompt()" title="Click to copy negative prompt"></p>
                     </div>
                 </div>
+                <div class="lightbox-category-toggle">
+                    <button id="category-toggle-btn" class="category-toggle-btn" onclick="toggleImageCategory()" title="Move to other category">
+                        <span id="category-toggle-text">hide</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -383,7 +388,8 @@
                 seed: link.getAttribute('data-seed') || '',
                 prompt: window.decodeHtmlEntities(link.getAttribute('data-prompt') || ''),
                 negPrompt: window.decodeHtmlEntities(link.getAttribute('data-neg-prompt') || ''),
-                loras: link.getAttribute('data-loras') || ''
+                loras: link.getAttribute('data-loras') || '',
+                is_nsfw: link.getAttribute('data-nsfw') === 'true'
             };
         });
     };
@@ -510,6 +516,13 @@
         // Store current data for copying
         window.currentPromptData = { prompt: prompt || '', negPrompt: negPrompt || '' };
         window.currentSeed = seed || '';
+        
+        // Update category toggle button based on current image's NSFW status
+        const currentImageData = window.lightboxMetadata[window.currentLightboxIndex];
+        const categoryToggleText = document.getElementById('category-toggle-text');
+        if (currentImageData && categoryToggleText) {
+            categoryToggleText.textContent = currentImageData.is_nsfw ? 'show' : 'hide';
+        }
     };
     
     window.closeLightbox = function() {
@@ -610,6 +623,66 @@
         }).catch(function(err) {
             console.error('Failed to copy seed: ', err);
             alert('Failed to copy seed to clipboard');
+        });
+    };
+    
+    window.toggleImageCategory = function() {
+        const currentImageData = window.lightboxMetadata[window.currentLightboxIndex];
+        if (!currentImageData || !currentImageData.id) return;
+        
+        const button = document.getElementById('category-toggle-btn');
+        const buttonText = document.getElementById('category-toggle-text');
+        
+        // Disable button during request
+        button.disabled = true;
+        buttonText.textContent = '...';
+        
+        // Make API request to toggle category
+        fetch('/api/toggle-category', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                image_id: parseInt(currentImageData.id)
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update the current metadata
+                const newCategory = data.new_category; // 'sfw' or 'nsfw'
+                
+                // Update the button text
+                buttonText.textContent = newCategory === 'nsfw' ? 'show' : 'hide';
+                
+                // Update the current image's metadata in our array
+                currentImageData.is_nsfw = newCategory === 'nsfw';
+                
+                // Show success feedback
+                button.style.backgroundColor = '#28a745';
+                button.style.color = 'white';
+                
+                setTimeout(function() {
+                    button.style.backgroundColor = '';
+                    button.style.color = '';
+                }, 1000);
+                
+                // If we're currently filtering by category, this image should disappear from the view
+                // We'll let the user refresh or navigate away naturally
+                
+            } else {
+                alert('Failed to move image: ' + (data.error || 'Unknown error'));
+                buttonText.textContent = 'hide';
+            }
+        })
+        .catch(error => {
+            console.error('Error toggling category:', error);
+            alert('Failed to move image. Please try again.');
+            buttonText.textContent = 'hide';
+        })
+        .finally(() => {
+            button.disabled = false;
         });
     };
     

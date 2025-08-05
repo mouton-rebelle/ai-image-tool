@@ -284,11 +284,17 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 	}
 
 	filename := fmt.Sprintf("%d%s", img.ID, ext)
-	filepath := filepath.Join(dir, filename)
+	filePath := filepath.Join(dir, filename)
 
-	// Check if file already exists
-	if _, err := os.Stat(filepath); err == nil {
-		return false, nil // File already exists
+	// Check if file already exists in either SFW or NSFW directory
+	sfwPath := filepath.Join("images", filename)
+	nsfwPath := filepath.Join("images_nsfw", filename)
+	
+	if _, err := os.Stat(sfwPath); err == nil {
+		return false, nil // File already exists in SFW directory
+	}
+	if _, err := os.Stat(nsfwPath); err == nil {
+		return false, nil // File already exists in NSFW directory
 	}
 
 	// Download the image
@@ -303,7 +309,7 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 	}
 
 	// Create the file
-	file, err := os.Create(filepath)
+	file, err := os.Create(filePath)
 	if err != nil {
 		return false, err
 	}
@@ -369,17 +375,18 @@ func (app *App) checkForNewCivitaiImages() error {
 			ext = ".jpg"
 		}
 		
-		dir := "images"
-		if img.NSFW {
-			dir = "images_nsfw"
-		}
-		
 		filename := fmt.Sprintf("%d%s", img.ID, ext)
-		filepath := filepath.Join(dir, filename)
 		
-		// If file exists, we've reached already-imported content - stop here
-		if _, err := os.Stat(filepath); err == nil {
-			fmt.Printf("Reached already-imported image %d, stopping auto-import\n", img.ID)
+		// If file exists in either directory, we've reached already-imported content - stop here
+		sfwPath := filepath.Join("images", filename)
+		nsfwPath := filepath.Join("images_nsfw", filename)
+		
+		if _, err := os.Stat(sfwPath); err == nil {
+			fmt.Printf("Reached already-imported image %d (in SFW), stopping auto-import\n", img.ID)
+			break
+		}
+		if _, err := os.Stat(nsfwPath); err == nil {
+			fmt.Printf("Reached already-imported image %d (in NSFW), stopping auto-import\n", img.ID)
 			break
 		}
 		

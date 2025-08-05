@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
@@ -9,8 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
@@ -83,6 +86,7 @@ type ImageMetadata struct {
 	ThumbnailPath   string    `json:"thumbnail_path"`
 	IsNSFW          bool      `json:"is_nsfw"`
 	ImageURL        string    `json:"image_url"`      // Full URL to the image
+	DisplayTimestamp *time.Time `json:"display_timestamp"` // Computed chronological timestamp
 	TruncatedPrompt string    `json:"-"`
 	LoRAs           []LoraData `json:"loras"` // LoRA data for JSON and template display
 }
@@ -131,16 +135,29 @@ func main() {
 	// Parse command line flags
 	clearImages := flag.Bool("clear-images", false, "Clear images and loras tables (preserves models)")
 	importImages := flag.Bool("import-civitai", false, "Import images and prompts from Civitai API")
+	cleanDuplicates := flag.Bool("clean-duplicates", false, "Move duplicate images from images_nsfw to temp folder")
 	help := flag.Bool("help", false, "Show usage information")
 	flag.Parse()
 
 	if *help {
 		fmt.Println("AI Generated Image Viewer")
 		fmt.Println("Usage:")
-		fmt.Println("  ./ai-generated-image-viewer                # Run the web server")
-		fmt.Println("  ./ai-generated-image-viewer -clear-images  # Clear images and LoRAs tables")
-		fmt.Println("  ./ai-generated-image-viewer -import-civitai # Import images from Civitai API")
-		fmt.Println("  ./ai-generated-image-viewer -help          # Show this help")
+		fmt.Println("  ./ai-generated-image-viewer                   # Run the web server")
+		fmt.Println("  ./ai-generated-image-viewer -clear-images     # Clear images and LoRAs tables")
+		fmt.Println("  ./ai-generated-image-viewer -import-civitai   # Import images from Civitai API")
+		fmt.Println("  ./ai-generated-image-viewer -clean-duplicates # Move duplicate NSFW images to temp folder")
+		fmt.Println("  ./ai-generated-image-viewer -help             # Show this help")
+		fmt.Println("")
+		fmt.Println("Server Configuration:")
+		fmt.Println("  HOST=0.0.0.0                                  # Bind to all network interfaces (default)")
+		fmt.Println("  HOST=127.0.0.1                               # Bind to localhost only (more secure)")
+		fmt.Println("  PORT=8081                                     # Port to listen on (default: 8081)")
+		fmt.Println("")
+		fmt.Println("Examples:")
+		fmt.Println("  ./ai-generated-image-viewer                   # Default: accessible from local network on port 8081")
+		fmt.Println("  HOST=127.0.0.1 ./ai-generated-image-viewer    # Localhost only")
+		fmt.Println("  PORT=8080 ./ai-generated-image-viewer         # Use port 8080")
+		fmt.Println("  HOST=192.168.1.78 PORT=8080 ./ai-generated-image-viewer  # Specific IP and port")
 		fmt.Println("")
 		fmt.Println("Configuration for Import:")
 		fmt.Println("  1. Create civitai.config file (copy from civitai.config.example)")
@@ -191,6 +208,16 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle clean-duplicates flag
+	if *cleanDuplicates {
+		duplicatesFound, err := app.cleanDuplicateImages()
+		if err != nil {
+			log.Fatal("Failed to clean duplicates:", err)
+		}
+		fmt.Printf("Duplicate cleanup completed. %d files moved to temp folder.\n", duplicatesFound)
+		os.Exit(0)
+	}
+
 	// Check for new Civitai images on startup if auto-import is enabled
 	if err := app.checkForNewCivitaiImages(); err != nil {
 		log.Printf("Warning: Auto-import failed: %v", err)
@@ -210,8 +237,16 @@ func main() {
 	router := mux.NewRouter()
 	app.setupRoutes(router)
 
-	fmt.Println("Starting server on :8081")
-	log.Fatal(http.ListenAndServe(":8081", router))
+	// Configure host and port from environment variables
+	host := getEnvOrDefault("HOST", "0.0.0.0") // Bind to all interfaces by default for network access
+	port := getEnvOrDefault("PORT", "8081")    // Default port 8081
+	address := fmt.Sprintf("%s:%s", host, port)
+
+	fmt.Printf("Starting server on %s\n", address)
+	if host == "0.0.0.0" {
+		fmt.Println("Server accessible from local network")
+	}
+	log.Fatal(http.ListenAndServe(address, router))
 }
 
 func (app *App) initTemplates() error {
@@ -233,6 +268,7 @@ func (app *App) setupRoutes(router *mux.Router) {
 	router.HandleFunc("/", app.handleIndex).Methods("GET")
 	router.HandleFunc("/api/images", app.handleAPIImages).Methods("GET")
 	router.HandleFunc("/search", app.handleSearch).Methods("GET")
+	router.HandleFunc("/api/toggle-category", app.handleToggleCategory).Methods("POST")
 }
 
 
@@ -429,7 +465,7 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 			SELECT DISTINCT image_id, name, weight 
 			FROM loras
 		) l ON i.id = l.image_id ` + whereClause + `
-		ORDER BY i.id DESC, l.name ASC
+		ORDER BY ` + app.getOrderByClause() + `, l.name ASC
 		LIMIT ? OFFSET ?
 	`
 
@@ -581,4 +617,206 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+type ToggleCategoryRequest struct {
+	ImageID int `json:"image_id"`
+}
+
+type ToggleCategoryResponse struct {
+	Success     bool   `json:"success"`
+	NewCategory string `json:"new_category,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+func (app *App) handleToggleCategory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req ToggleCategoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		resp := ToggleCategoryResponse{Success: false, Error: "Invalid request body"}
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	if req.ImageID <= 0 {
+		resp := ToggleCategoryResponse{Success: false, Error: "Invalid image ID"}
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	// Get current image info from database
+	var filename string
+	var currentNSFW bool
+	err := app.db.QueryRow("SELECT filename, is_nsfw FROM images WHERE id = ?", req.ImageID).Scan(&filename, &currentNSFW)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			resp := ToggleCategoryResponse{Success: false, Error: "Image not found"}
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+		log.Printf("Database error: %v", err)
+		resp := ToggleCategoryResponse{Success: false, Error: "Database error"}
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	// Toggle NSFW status
+	newNSFW := !currentNSFW
+	newCategory := "sfw"
+	if newNSFW {
+		newCategory = "nsfw"
+	}
+
+	// Update database
+	_, err = app.db.Exec("UPDATE images SET is_nsfw = ? WHERE id = ?", newNSFW, req.ImageID)
+	if err != nil {
+		log.Printf("Failed to update database: %v", err)
+		resp := ToggleCategoryResponse{Success: false, Error: "Failed to update database"}
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	// Move files between directories
+	err = app.moveImageFiles(filename, currentNSFW, newNSFW)
+	if err != nil {
+		log.Printf("Failed to move files: %v", err)
+		// Rollback database change
+		app.db.Exec("UPDATE images SET is_nsfw = ? WHERE id = ?", currentNSFW, req.ImageID)
+		resp := ToggleCategoryResponse{Success: false, Error: "Failed to move image files"}
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	resp := ToggleCategoryResponse{Success: true, NewCategory: newCategory}
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (app *App) moveImageFiles(filename string, fromNSFW, toNSFW bool) error {
+	// Determine source and destination directories
+	var sourceDir, destDir string
+	if fromNSFW {
+		sourceDir = "images_nsfw"
+		destDir = "images"
+	} else {
+		sourceDir = "images"
+		destDir = "images_nsfw"
+	}
+
+	// Ensure destination directory exists
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory: %v", err)
+	}
+
+	// Move main image file
+	sourcePath := filepath.Join(sourceDir, filename)
+	destPath := filepath.Join(destDir, filename)
+
+	if _, err := os.Stat(sourcePath); err == nil {
+		if err := os.Rename(sourcePath, destPath); err != nil {
+			return fmt.Errorf("failed to move image file: %v", err)
+		}
+	}
+
+	// For thumbnails, we don't need separate directories, but we need to ensure consistency
+	// The thumbnail path in database stays the same, just the main image moves
+	
+	log.Printf("Moved image %s from %s to %s category", filename, 
+		map[bool]string{false: "SFW", true: "NSFW"}[fromNSFW],
+		map[bool]string{false: "SFW", true: "NSFW"}[toNSFW])
+
+	return nil
+}
+
+func (app *App) cleanDuplicateImages() (int, error) {
+	fmt.Println("Starting duplicate image cleanup...")
+	fmt.Println("Scanning for images that exist in both images/ and images_nsfw/ directories...")
+
+	// Create temp directory if it doesn't exist
+	tempDir := "temp"
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return 0, fmt.Errorf("failed to create temp directory: %v", err)
+	}
+
+	// Read all files from images_nsfw directory
+	nsfwFiles, err := os.ReadDir("images_nsfw")
+	if err != nil {
+		return 0, fmt.Errorf("failed to read images_nsfw directory: %v", err)
+	}
+
+	duplicatesFound := 0
+	movedFiles := []string{}
+
+	// Check each file in images_nsfw to see if it exists in images
+	for _, file := range nsfwFiles {
+		if file.IsDir() {
+			continue
+		}
+
+		filename := file.Name()
+		nsfwPath := filepath.Join("images_nsfw", filename)
+		sfwPath := filepath.Join("images", filename)
+
+		// Check if the same file exists in images directory
+		if _, err := os.Stat(sfwPath); err == nil {
+			// File exists in both directories - this is a duplicate
+			duplicatesFound++
+			
+			// Move the NSFW version to temp folder
+			tempPath := filepath.Join(tempDir, filename)
+			
+			fmt.Printf("Moving duplicate: %s -> %s\n", nsfwPath, tempPath)
+			
+			if err := os.Rename(nsfwPath, tempPath); err != nil {
+				fmt.Printf("Warning: Failed to move %s: %v\n", filename, err)
+				continue
+			}
+			
+			movedFiles = append(movedFiles, filename)
+			
+			// Update database to set is_nsfw = false for this image
+			// Extract image ID from filename (assuming format: ID.extension)
+			filenameWithoutExt := strings.TrimSuffix(filename, filepath.Ext(filename))
+			if imageID, err := strconv.Atoi(filenameWithoutExt); err == nil {
+				_, dbErr := app.db.Exec("UPDATE images SET is_nsfw = false WHERE id = ?", imageID)
+				if dbErr != nil {
+					fmt.Printf("Warning: Failed to update database for image %d: %v\n", imageID, dbErr)
+				}
+			}
+		}
+	}
+
+	if duplicatesFound > 0 {
+		fmt.Printf("\nDuplicate cleanup summary:\n")
+		fmt.Printf("- Total duplicates found: %d\n", duplicatesFound)
+		fmt.Printf("- Files moved to temp folder: %d\n", len(movedFiles))
+		fmt.Printf("- Database records updated to SFW status\n")
+		fmt.Printf("\nMoved files:\n")
+		for _, filename := range movedFiles {
+			fmt.Printf("  - %s\n", filename)
+		}
+		fmt.Printf("\nReview the files in the 'temp' folder and delete them if you're satisfied with the cleanup.\n")
+	} else {
+		fmt.Println("No duplicate images found.")
+	}
+
+	return duplicatesFound, nil
+}
+
+func (app *App) getOrderByClause() string {
+	// Check if display_timestamp column exists, otherwise fall back to created_at or id
+	query := `SELECT COUNT(*) FROM pragma_table_info('images') WHERE name = 'display_timestamp'`
+	var count int
+	err := app.db.QueryRow(query).Scan(&count)
+	if err != nil || count == 0 {
+		// Column doesn't exist, fall back to created_at or id
+		// Check if created_at exists
+		query = `SELECT COUNT(*) FROM pragma_table_info('images') WHERE name = 'created_at'`
+		err = app.db.QueryRow(query).Scan(&count)
+		if err != nil || count == 0 {
+			return "i.id DESC" // Fallback to id only
+		}
+		return "i.created_at DESC, i.id DESC"
+	}
+	return "i.display_timestamp DESC, i.id DESC"
 }

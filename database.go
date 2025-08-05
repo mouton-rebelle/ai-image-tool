@@ -4,7 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -62,6 +66,7 @@ func (app *App) initDB() error {
 	CREATE INDEX IF NOT EXISTS idx_model_hash ON images(model_hash);
 	CREATE INDEX IF NOT EXISTS idx_prompt ON images(prompt);
 	CREATE INDEX IF NOT EXISTS idx_nsfw ON images(is_nsfw);
+	CREATE INDEX IF NOT EXISTS idx_created_at ON images(created_at DESC);
 	`
 
 	// Create loras table
@@ -90,7 +95,54 @@ func (app *App) initDB() error {
 	}
 
 	_, err = app.db.Exec(createLorasTable)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: Add display_timestamp column if it doesn't exist
+	log.Printf("Attempting to add display_timestamp column...")
+	_, err = app.db.Exec("ALTER TABLE images ADD COLUMN display_timestamp DATETIME")
+	if err != nil {
+		// Column might already exist, check if it's a different error
+		if !strings.Contains(err.Error(), "duplicate column name") && !strings.Contains(err.Error(), "already exists") {
+			log.Printf("Warning: Failed to add display_timestamp column: %v", err)
+			// Don't proceed with migration if column creation failed
+			return nil
+		} else {
+			log.Printf("Column already exists, continuing...")
+		}
+	} else {
+		log.Printf("Successfully added display_timestamp column")
+	}
+
+	// Create index for display_timestamp if it doesn't exist
+	_, err = app.db.Exec("CREATE INDEX IF NOT EXISTS idx_display_timestamp ON images(display_timestamp DESC)")
+	if err != nil {
+		log.Printf("Warning: Failed to create display_timestamp index: %v", err)
+	}
+
+	// Migration: Populate display_timestamp for existing records that don't have it
+	// First check if the column exists before trying to migrate
+	if app.columnExists("images", "display_timestamp") {
+		err = app.migrateDisplayTimestamps()
+		if err != nil {
+			log.Printf("Warning: Failed to migrate display timestamps: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func (app *App) columnExists(tableName, columnName string) bool {
+	query := fmt.Sprintf("SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = '%s'", tableName, columnName)
+	var count int
+	err := app.db.QueryRow(query).Scan(&count)
+	if err != nil {
+		log.Printf("Error checking if column exists: %v", err)
+		return false
+	}
+	log.Printf("Column check: %s.%s exists = %t", tableName, columnName, count > 0)
+	return count > 0
 }
 
 func (app *App) clearImagesTables() error {
@@ -123,6 +175,97 @@ func (app *App) clearImagesTables() error {
 	fmt.Printf("  Images: %d (cleared)\n", imageCount)
 	fmt.Printf("  LoRAs: %d (cleared)\n", loraCount)
 
+	return nil
+}
+
+func (app *App) migrateDisplayTimestamps() error {
+	log.Printf("Starting display timestamp migration...")
+	
+	// Double-check that the column exists before querying it
+	if !app.columnExists("images", "display_timestamp") {
+		log.Printf("display_timestamp column does not exist, skipping migration")
+		return nil
+	}
+	
+	// Find all images that don't have display_timestamp set
+	query := "SELECT id, filename FROM images WHERE display_timestamp IS NULL"
+	rows, err := app.db.Query(query)
+	if err != nil {
+		return fmt.Errorf("failed to query images for migration: %v", err)
+	}
+	defer rows.Close()
+
+	var imagesToUpdate []struct {
+		ID       int
+		Filename string
+	}
+
+	for rows.Next() {
+		var imageData struct {
+			ID       int
+			Filename string
+		}
+		if err := rows.Scan(&imageData.ID, &imageData.Filename); err != nil {
+			log.Printf("Error scanning image data: %v", err)
+			continue
+		}
+		imagesToUpdate = append(imagesToUpdate, imageData)
+	}
+
+	if len(imagesToUpdate) == 0 {
+		return nil // No migration needed
+	}
+
+	log.Printf("Migrating display timestamps for %d existing images...", len(imagesToUpdate))
+
+	// Update each image with computed display timestamp
+	updateQuery := "UPDATE images SET display_timestamp = ? WHERE id = ?"
+	for _, imageData := range imagesToUpdate {
+		// Try to find the actual image file
+		var imagePath string
+		if _, err := os.Stat(filepath.Join("images", imageData.Filename)); err == nil {
+			imagePath = filepath.Join("images", imageData.Filename)
+		} else if _, err := os.Stat(filepath.Join("images_nsfw", imageData.Filename)); err == nil {
+			imagePath = filepath.Join("images_nsfw", imageData.Filename)
+		} else {
+			// File not found, use fallback logic based on filename only
+			imagePath = ""
+		}
+
+		// Calculate display timestamp (inline implementation)
+		var displayTimestamp *time.Time
+		
+		// Method 1: For Civitai images (numeric filenames), use ID-based timestamp
+		idStr := strings.Split(imageData.Filename, ".")[0]
+		if civitaiID, err := strconv.Atoi(idStr); err == nil {
+			// Civitai IDs are roughly chronological
+			baseDate := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+			timestampOffset := time.Duration(civitaiID/100) * time.Second
+			computed := baseDate.Add(timestampOffset)
+			displayTimestamp = &computed
+		} else if imagePath != "" {
+			// Method 2: For local images, use file modification time
+			if fileInfo, err := os.Stat(imagePath); err == nil {
+				modTime := fileInfo.ModTime()
+				displayTimestamp = &modTime
+			} else {
+				// Method 3: Fallback to current time
+				now := time.Now()
+				displayTimestamp = &now
+			}
+		} else {
+			// Method 3: Fallback to current time if no file found
+			now := time.Now()
+			displayTimestamp = &now
+		}
+
+		_, err := app.db.Exec(updateQuery, displayTimestamp, imageData.ID)
+		if err != nil {
+			log.Printf("Error updating display timestamp for image %d: %v", imageData.ID, err)
+		}
+	}
+
+	log.Printf("Display timestamp migration completed for %d images", len(imagesToUpdate))
 	return nil
 }
 
@@ -201,8 +344,8 @@ func (app *App) insertImageMetadata(metadata *ImageMetadata) error {
 	}
 
 	query := `
-	INSERT INTO images (id, filename, width, height, model_id, model_hash, prompt, neg_prompt, steps, cfg_scale, sampler, scheduler, seed, thumbnail_path, is_nsfw)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO images (id, filename, width, height, model_id, model_hash, prompt, neg_prompt, steps, cfg_scale, sampler, scheduler, seed, thumbnail_path, is_nsfw, display_timestamp)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := app.db.Exec(query,
@@ -221,6 +364,7 @@ func (app *App) insertImageMetadata(metadata *ImageMetadata) error {
 		metadata.Seed,
 		metadata.ThumbnailPath,
 		metadata.IsNSFW,
+		metadata.DisplayTimestamp,
 	)
 
 	if err != nil {
