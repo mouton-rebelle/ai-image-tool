@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -286,26 +287,53 @@ func (img *ImageMetadata) SetImageURL() {
 
 // calculateDisplayTimestamp computes a chronological timestamp for the image
 func calculateDisplayTimestamp(imagePath string, imageID int, filename string) *time.Time {
-	// Method 1: For Civitai images (numeric filenames), use ID-based timestamp
+	// Method 1: Check if we have real timestamp from Civitai API
+	civitaiTimestamps := loadCivitaiTimestamps()
+	if createdAtStr, exists := civitaiTimestamps[filename]; exists {
+		if createdAt, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+			return &createdAt
+		} else {
+			log.Printf("Warning: Failed to parse timestamp %s for %s: %v", createdAtStr, filename, err)
+		}
+	}
+
+	// Method 2: For Civitai images without timestamp mapping, use ID-based fallback
 	idStr := strings.Split(filename, ".")[0]
 	if civitaiID, err := strconv.Atoi(idStr); err == nil {
-		// Civitai IDs are roughly chronological
-		// Use a base date (e.g., Jan 1, 2020) and add seconds based on ID
-		// This is an approximation, but provides better ordering than processing time
-		baseDate := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-		// Scale the ID to spread over time (divide by large factor to get reasonable timeline)
-		timestampOffset := time.Duration(civitaiID/100) * time.Second
+		// This is a Civitai image but no timestamp available - use improved algorithm
+		// Use more recent base date and better scaling for high IDs
+		baseDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		timestampOffset := time.Duration(civitaiID/10000) * time.Second
 		displayTime := baseDate.Add(timestampOffset)
 		return &displayTime
 	}
 
-	// Method 2: For local images, use file modification time
+	// Method 3: For local images, use file modification time
 	if fileInfo, err := os.Stat(imagePath); err == nil {
 		modTime := fileInfo.ModTime()
 		return &modTime
 	}
 
-	// Method 3: Fallback to current time
+	// Method 4: Fallback to current time
 	now := time.Now()
 	return &now
+}
+
+// loadCivitaiTimestamps loads timestamp mapping from civitai_timestamps.json
+func loadCivitaiTimestamps() map[string]string {
+	mapping := make(map[string]string)
+	
+	file, err := os.Open("civitai_timestamps.json")
+	if err != nil {
+		// File doesn't exist or can't be opened
+		return mapping
+	}
+	defer file.Close()
+	
+	if err := json.NewDecoder(file).Decode(&mapping); err != nil {
+		log.Printf("Warning: Failed to decode civitai_timestamps.json: %v", err)
+		return make(map[string]string)
+	}
+	
+	return mapping
 }

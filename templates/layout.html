@@ -565,65 +565,70 @@
         }
     };
     
-    window.copyPositivePrompt = function() {
-        if (!window.currentPromptData || !window.currentPromptData.prompt) return;
+    // Generic copy function with visual feedback
+    function copyWithFeedback(text, elementId, itemName) {
+        if (!text) return;
         
-        navigator.clipboard.writeText(window.currentPromptData.prompt).then(function() {
-            // Show feedback on the positive prompt element
-            const promptElement = document.getElementById('lightbox-prompt');
-            const originalBg = promptElement.style.backgroundColor;
-            promptElement.style.backgroundColor = '#28a745';
-            promptElement.style.color = 'white';
+        // Copy to clipboard with fallback
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(() => showCopyFeedback(elementId)).catch(err => showCopyError(itemName, err));
+        } else {
+            // Fallback for insecure contexts
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
             
-            setTimeout(function() {
-                promptElement.style.backgroundColor = originalBg;
-                promptElement.style.color = '';
-            }, 1000);
-        }).catch(function(err) {
-            console.error('Failed to copy positive prompt: ', err);
-            alert('Failed to copy positive prompt to clipboard');
-        });
+            try {
+                const result = document.execCommand('copy');
+                document.body.removeChild(textArea);
+                if (result) {
+                    showCopyFeedback(elementId);
+                } else {
+                    showCopyError(itemName, new Error('execCommand failed'));
+                }
+            } catch (err) {
+                document.body.removeChild(textArea);
+                showCopyError(itemName, err);
+            }
+        }
+    }
+    
+    function showCopyFeedback(elementId) {
+        const element = document.getElementById(elementId);
+        if (!element) return;
+        
+        const originalBg = element.style.backgroundColor;
+        element.style.backgroundColor = '#28a745';
+        element.style.color = 'white';
+        
+        setTimeout(function() {
+            element.style.backgroundColor = originalBg;
+            element.style.color = '';
+        }, 1000);
+    }
+    
+    function showCopyError(itemName, err) {
+        console.error(`Failed to copy ${itemName}: `, err);
+        alert(`Failed to copy ${itemName} to clipboard`);
+    }
+
+    window.copyPositivePrompt = function() {
+        const text = window.currentPromptData?.prompt;
+        copyWithFeedback(text, 'lightbox-prompt', 'positive prompt');
     };
     
     window.copyNegativePrompt = function() {
-        if (!window.currentPromptData || !window.currentPromptData.negPrompt) return;
-        
-        navigator.clipboard.writeText(window.currentPromptData.negPrompt).then(function() {
-            // Show feedback on the negative prompt element
-            const promptElement = document.getElementById('lightbox-neg-prompt');
-            const originalBg = promptElement.style.backgroundColor;
-            promptElement.style.backgroundColor = '#28a745';
-            promptElement.style.color = 'white';
-            
-            setTimeout(function() {
-                promptElement.style.backgroundColor = originalBg;
-                promptElement.style.color = '';
-            }, 1000);
-        }).catch(function(err) {
-            console.error('Failed to copy negative prompt: ', err);
-            alert('Failed to copy negative prompt to clipboard');
-        });
+        const text = window.currentPromptData?.negPrompt;
+        copyWithFeedback(text, 'lightbox-neg-prompt', 'negative prompt');
     };
     
-    
     window.copySeed = function() {
-        if (!window.currentSeed) return;
-        
-        navigator.clipboard.writeText(window.currentSeed).then(function() {
-            // Show feedback on the seed element
-            const seedElement = document.getElementById('lightbox-seed');
-            const originalBg = seedElement.style.backgroundColor;
-            seedElement.style.backgroundColor = '#28a745';
-            seedElement.style.color = 'white';
-            
-            setTimeout(function() {
-                seedElement.style.backgroundColor = originalBg;
-                seedElement.style.color = '';
-            }, 1000);
-        }).catch(function(err) {
-            console.error('Failed to copy seed: ', err);
-            alert('Failed to copy seed to clipboard');
-        });
+        copyWithFeedback(window.currentSeed, 'lightbox-seed', 'seed');
     };
     
     window.toggleImageCategory = function() {

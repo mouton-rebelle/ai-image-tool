@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -52,10 +53,73 @@ func extractLoRAs(text string) (string, []LoraData) {
 	return cleanedText, loras
 }
 
+// SwarmUIParams represents Swarm UI parameter format
+type SwarmUIParams struct {
+	SUIImageParams struct {
+		Prompt       string  `json:"prompt"`
+		NegPrompt    string  `json:"negativeprompt"`
+		Model        string  `json:"model"`
+		Seed         int64   `json:"seed"`
+		Steps        int     `json:"steps"`
+		CFGScale     float64 `json:"cfgscale"`
+		Sampler      string  `json:"sampler"`
+		Scheduler    string  `json:"scheduler"`
+		Width        int     `json:"width"`
+		Height       int     `json:"height"`
+	} `json:"sui_image_params"`
+}
+
+// ComfyUIWorkflow represents ComfyUI workflow format
+type ComfyUIWorkflow struct {
+	ExtraMetadata string `json:"extraMetadata"`
+}
+
+// ComfyUIExtraMetadata represents the metadata within ComfyUI workflows
+type ComfyUIExtraMetadata struct {
+	Prompt         string  `json:"prompt"`
+	NegativePrompt string  `json:"negativePrompt"`
+	Steps          int     `json:"steps"`
+	CFGScale       float64 `json:"cfgScale"`
+	Sampler        string  `json:"sampler"`
+	Seed           int64   `json:"seed"`
+}
+
 func (app *App) parseGenerationParams(text string, metadata *ImageMetadata) {
 	// Clean Unicode encoding where spaces are inserted between characters
 	cleanText := app.cleanUnicodeText(text)
 
+	// First, try to detect and parse JSON formats
+	if app.tryParseJSON(cleanText, metadata) {
+		return // Successfully parsed as JSON, we're done
+	}
+
+	// Fall back to traditional text parsing for non-JSON formats
+	app.parseTraditionalParams(cleanText, metadata)
+}
+
+// tryParseJSON attempts to parse JSON workflows and returns true if successful
+func (app *App) tryParseJSON(text string, metadata *ImageMetadata) bool {
+	// Check if text looks like JSON
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "{") || !strings.HasSuffix(trimmed, "}") {
+		return false
+	}
+
+	// Try Swarm UI format first
+	if app.parseSwarmUIParams(trimmed, metadata) {
+		return true
+	}
+
+	// Try ComfyUI format
+	if app.parseComfyUIWorkflow(trimmed, metadata) {
+		return true
+	}
+
+	log.Printf("Found JSON but couldn't parse it as known format: %s", trimmed[:min(100, len(trimmed))])
+	return false
+}
+
+func (app *App) parseTraditionalParams(cleanText string, metadata *ImageMetadata) {
 	// Try to parse common AI generation parameters
 	// Look for prompt at the beginning (often the first part before parameters)
 
@@ -345,6 +409,107 @@ func (app *App) processPNGiTextChunk(data []byte, metadata *ImageMetadata) {
 		app.checkPNGTextForParams(keyword, text, metadata)
 	}
 }
+
+// parseSwarmUIParams parses Swarm UI format JSON
+func (app *App) parseSwarmUIParams(jsonText string, metadata *ImageMetadata) bool {
+	var swarmParams SwarmUIParams
+	if err := json.Unmarshal([]byte(jsonText), &swarmParams); err != nil {
+		return false
+	}
+
+	params := swarmParams.SUIImageParams
+	if params.Prompt == "" {
+		return false // Not a valid Swarm UI format
+	}
+
+	// Extract and clean prompts
+	if params.Prompt != "" {
+		cleanedPrompt, promptLoRAs := extractLoRAs(params.Prompt)
+		metadata.Prompt = cleanedPrompt
+		metadata.LoRAs = append(metadata.LoRAs, promptLoRAs...)
+	}
+
+	if params.NegPrompt != "" {
+		cleanedNegPrompt, negLoRAs := extractLoRAs(params.NegPrompt)
+		metadata.NegPrompt = cleanedNegPrompt
+		metadata.LoRAs = append(metadata.LoRAs, negLoRAs...)
+	}
+
+	// Extract other parameters
+	if params.Model != "" {
+		metadata.Model = params.Model
+	}
+	if params.Steps > 0 {
+		metadata.Steps = params.Steps
+	}
+	if params.CFGScale > 0 {
+		metadata.CFGScale = params.CFGScale
+	}
+	if params.Sampler != "" {
+		metadata.Sampler = params.Sampler
+	}
+	if params.Scheduler != "" {
+		metadata.Scheduler = params.Scheduler
+	}
+	if params.Seed != 0 {
+		metadata.Seed = params.Seed
+	}
+
+	log.Printf("Successfully parsed Swarm UI parameters: prompt=%s, model=%s, steps=%d", 
+		metadata.Prompt[:min(50, len(metadata.Prompt))], metadata.Model, metadata.Steps)
+	return true
+}
+
+// parseComfyUIWorkflow parses ComfyUI workflow JSON
+func (app *App) parseComfyUIWorkflow(jsonText string, metadata *ImageMetadata) bool {
+	var workflow ComfyUIWorkflow
+	if err := json.Unmarshal([]byte(jsonText), &workflow); err != nil {
+		return false
+	}
+
+	if workflow.ExtraMetadata == "" {
+		return false // Not a ComfyUI workflow with metadata
+	}
+
+	// Parse the nested JSON in extraMetadata
+	var extraMeta ComfyUIExtraMetadata
+	if err := json.Unmarshal([]byte(workflow.ExtraMetadata), &extraMeta); err != nil {
+		log.Printf("Failed to parse ComfyUI extraMetadata: %v", err)
+		return false
+	}
+
+	// Extract and clean prompts
+	if extraMeta.Prompt != "" {
+		cleanedPrompt, promptLoRAs := extractLoRAs(extraMeta.Prompt)
+		metadata.Prompt = cleanedPrompt
+		metadata.LoRAs = append(metadata.LoRAs, promptLoRAs...)
+	}
+
+	if extraMeta.NegativePrompt != "" {
+		cleanedNegPrompt, negLoRAs := extractLoRAs(extraMeta.NegativePrompt)
+		metadata.NegPrompt = cleanedNegPrompt
+		metadata.LoRAs = append(metadata.LoRAs, negLoRAs...)
+	}
+
+	// Extract other parameters
+	if extraMeta.Steps > 0 {
+		metadata.Steps = extraMeta.Steps
+	}
+	if extraMeta.CFGScale > 0 {
+		metadata.CFGScale = extraMeta.CFGScale
+	}
+	if extraMeta.Sampler != "" {
+		metadata.Sampler = extraMeta.Sampler
+	}
+	if extraMeta.Seed != 0 {
+		metadata.Seed = extraMeta.Seed
+	}
+
+	log.Printf("Successfully parsed ComfyUI workflow: prompt=%s, steps=%d", 
+		metadata.Prompt[:min(50, len(metadata.Prompt))], metadata.Steps)
+	return true
+}
+
 
 func (app *App) checkPNGTextForParams(keyword, text string, metadata *ImageMetadata) {
 	// Check common keys used by AI image generators

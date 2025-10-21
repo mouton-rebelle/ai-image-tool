@@ -136,6 +136,8 @@ func main() {
 	clearImages := flag.Bool("clear-images", false, "Clear images and loras tables (preserves models)")
 	importImages := flag.Bool("import-civitai", false, "Import images and prompts from Civitai API")
 	cleanDuplicates := flag.Bool("clean-duplicates", false, "Move duplicate images from images_nsfw to temp folder")
+	fixTimestamps := flag.Bool("fix-timestamps", false, "Fix display timestamps for existing Civitai images using real creation dates")
+	fixMetadata := flag.String("fix-metadata", "", "Re-process metadata for specific images (comma-separated filenames)")
 	help := flag.Bool("help", false, "Show usage information")
 	flag.Parse()
 
@@ -146,6 +148,8 @@ func main() {
 		fmt.Println("  ./ai-generated-image-viewer -clear-images     # Clear images and LoRAs tables")
 		fmt.Println("  ./ai-generated-image-viewer -import-civitai   # Import images from Civitai API")
 		fmt.Println("  ./ai-generated-image-viewer -clean-duplicates # Move duplicate NSFW images to temp folder")
+		fmt.Println("  ./ai-generated-image-viewer -fix-timestamps   # Fix display timestamps using real Civitai creation dates")
+		fmt.Println("  ./ai-generated-image-viewer -fix-metadata=\"img1.jpeg,img2.jpeg\" # Re-process metadata for specific images")
 		fmt.Println("  ./ai-generated-image-viewer -help             # Show this help")
 		fmt.Println("")
 		fmt.Println("Server Configuration:")
@@ -215,6 +219,31 @@ func main() {
 			log.Fatal("Failed to clean duplicates:", err)
 		}
 		fmt.Printf("Duplicate cleanup completed. %d files moved to temp folder.\n", duplicatesFound)
+		os.Exit(0)
+	}
+
+	// Handle fix-timestamps flag
+	if *fixTimestamps {
+		updatedCount, err := app.fixCivitaiTimestamps()
+		if err != nil {
+			log.Fatal("Failed to fix timestamps:", err)
+		}
+		fmt.Printf("Timestamp fix completed. %d images updated.\n", updatedCount)
+		os.Exit(0)
+	}
+
+	// Handle fix-metadata flag
+	if *fixMetadata != "" {
+		filenames := strings.Split(*fixMetadata, ",")
+		for i := range filenames {
+			filenames[i] = strings.TrimSpace(filenames[i])
+		}
+		
+		updatedCount, err := app.fixImageMetadata(filenames)
+		if err != nil {
+			log.Fatal("Failed to fix metadata:", err)
+		}
+		fmt.Printf("Metadata fix completed. %d images updated.\n", updatedCount)
 		os.Exit(0)
 	}
 
@@ -819,4 +848,137 @@ func (app *App) getOrderByClause() string {
 		return "i.created_at DESC, i.id DESC"
 	}
 	return "i.display_timestamp DESC, i.id DESC"
+}
+
+// fixCivitaiTimestamps updates display_timestamp for all Civitai images using real creation dates
+func (app *App) fixCivitaiTimestamps() (int, error) {
+	fmt.Println("Starting Civitai timestamp fix...")
+	
+	// Load timestamp mapping
+	mapping, err := LoadTimestampMapping()
+	if err != nil {
+		return 0, fmt.Errorf("failed to load timestamp mapping: %v", err)
+	}
+	
+	if len(mapping) == 0 {
+		return 0, fmt.Errorf("no timestamp mapping found. Please run import first to generate civitai_timestamps.json")
+	}
+	
+	fmt.Printf("Found %d timestamp mappings to process\n", len(mapping))
+	
+	// Get all images with numeric filenames (Civitai images)
+	query := `SELECT id, filename FROM images WHERE filename GLOB '[0-9]*.*'`
+	rows, err := app.db.Query(query)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query images: %v", err)
+	}
+	defer rows.Close()
+	
+	updatedCount := 0
+	
+	// Process each Civitai image
+	for rows.Next() {
+		var imageID int
+		var filename string
+		
+		if err := rows.Scan(&imageID, &filename); err != nil {
+			log.Printf("Error scanning row: %v", err)
+			continue
+		}
+		
+		// Check if we have a timestamp for this image
+		if createdAtStr, exists := mapping[filename]; exists {
+			// Parse the timestamp
+			if createdAt, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+				// Update the database
+				updateQuery := `UPDATE images SET display_timestamp = ? WHERE id = ?`
+				if _, err := app.db.Exec(updateQuery, createdAt.Format(time.RFC3339), imageID); err != nil {
+					log.Printf("Error updating timestamp for image %d (%s): %v", imageID, filename, err)
+				} else {
+					updatedCount++
+					if updatedCount%100 == 0 {
+						fmt.Printf("Updated %d images...\n", updatedCount)
+					}
+				}
+			} else {
+				log.Printf("Error parsing timestamp %s for image %s: %v", createdAtStr, filename, err)
+			}
+		}
+	}
+	
+	if err := rows.Err(); err != nil {
+		return updatedCount, fmt.Errorf("error processing rows: %v", err)
+	}
+	
+	fmt.Printf("Successfully updated timestamps for %d Civitai images\n", updatedCount)
+	return updatedCount, nil
+}
+
+// fixImageMetadata re-processes metadata for specific images
+func (app *App) fixImageMetadata(filenames []string) (int, error) {
+	fmt.Printf("Starting metadata fix for %d images...\n", len(filenames))
+	
+	updatedCount := 0
+	
+	for _, filename := range filenames {
+		fmt.Printf("Processing %s...\n", filename)
+		
+		// Find the image in the database to get its ID and path info
+		var imageID int
+		var isNSFW bool
+		err := app.db.QueryRow("SELECT id, is_nsfw FROM images WHERE filename = ?", filename).Scan(&imageID, &isNSFW)
+		if err != nil {
+			fmt.Printf("Error: Image %s not found in database: %v\n", filename, err)
+			continue
+		}
+		
+		// Determine the image path
+		var imagePath string
+		if isNSFW {
+			imagePath = "images_nsfw/" + filename
+		} else {
+			imagePath = "images/" + filename
+		}
+		
+		// Re-extract metadata
+		metadata, err := app.extractImageMetadata(imagePath, isNSFW)
+		if err != nil {
+			fmt.Printf("Error: Failed to extract metadata for %s: %v\n", filename, err)
+			continue
+		}
+		
+		// Update the database with new metadata
+		updateQuery := `UPDATE images SET 
+			prompt = ?, neg_prompt = ?, steps = ?, cfg_scale = ?, 
+			sampler = ?, scheduler = ?, seed = ?, model_hash = ?
+			WHERE id = ?`
+			
+		_, err = app.db.Exec(updateQuery, 
+			metadata.Prompt, metadata.NegPrompt, metadata.Steps, metadata.CFGScale,
+			metadata.Sampler, metadata.Scheduler, metadata.Seed, metadata.ModelHash,
+			imageID)
+		if err != nil {
+			fmt.Printf("Error: Failed to update database for %s: %v\n", filename, err)
+			continue
+		}
+		
+		// Clear existing LoRA data for this image
+		_, err = app.db.Exec("DELETE FROM loras WHERE image_id = ?", imageID)
+		if err != nil {
+			fmt.Printf("Warning: Failed to clear LoRA data for %s: %v\n", filename, err)
+		}
+		
+		// Insert new LoRA data
+		if len(metadata.LoRAs) > 0 {
+			err = app.insertLoraData(imageID, metadata.LoRAs)
+			if err != nil {
+				fmt.Printf("Warning: Failed to insert LoRA data for %s: %v\n", filename, err)
+			}
+		}
+		
+		updatedCount++
+		fmt.Printf("Successfully updated metadata for %s\n", filename)
+	}
+	
+	return updatedCount, nil
 }

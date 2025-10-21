@@ -12,10 +12,12 @@ thumbnails/
 prompts_nsfw.txt
 prompts_sfw.txt
 prompts.txt
+civitai_timestamps.json
 # Go build artifacts
 ai-generated-image-viewer
 go.sum
 tmp
+node_modules/
 
 # IDE and editor files
 .vscode/

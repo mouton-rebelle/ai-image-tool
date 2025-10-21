@@ -22,12 +22,13 @@ type CivitaiImageResponse struct {
 
 // CivitaiImage represents a single image from the API
 type CivitaiImage struct {
-	ID     int    `json:"id"`
-	URL    string `json:"url"`
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
-	NSFW   bool   `json:"nsfw"`
-	Meta   struct {
+	ID        int    `json:"id"`
+	URL       string `json:"url"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	NSFW      bool   `json:"nsfw"`
+	CreatedAt string `json:"createdAt"`
+	Meta      struct {
 		Prompt    string `json:"prompt"`
 		NegPrompt string `json:"negativePrompt"`
 		Steps     int    `json:"steps"`
@@ -157,6 +158,13 @@ func (app *App) importFromCivitai() error {
 	excludedWords := loadExcludedWords()
 	fmt.Printf("Loaded %d excluded words\n", len(excludedWords))
 
+	// Load timestamp mapping
+	timestampMapping, err := LoadTimestampMapping()
+	if err != nil {
+		return fmt.Errorf("failed to load timestamp mapping: %v", err)
+	}
+	fmt.Printf("Loaded %d existing timestamp mappings\n", len(timestampMapping))
+
 	// Start API pagination
 	page := 1
 	nextPage := ""
@@ -190,6 +198,10 @@ func (app *App) importFromCivitai() error {
 				continue
 			}
 
+			// Update timestamp mapping regardless of whether we downloaded or skipped
+			// (in case we already have the file but not the timestamp)
+			updateTimestampMapping(timestampMapping, img)
+
 			if downloaded {
 				totalDownloaded++
 				fmt.Printf("  Downloaded image %d\n", img.ID)
@@ -210,6 +222,13 @@ func (app *App) importFromCivitai() error {
 
 		// Rate limiting
 		time.Sleep(1 * time.Second)
+	}
+
+	// Save timestamp mapping
+	if err := saveTimestampMapping(timestampMapping); err != nil {
+		fmt.Printf("Warning: Failed to save timestamp mapping: %v\n", err)
+	} else {
+		fmt.Printf("Saved %d timestamp mappings\n", len(timestampMapping))
 	}
 
 	fmt.Printf("\n=== Import Summary ===\n")
@@ -354,6 +373,12 @@ func (app *App) checkForNewCivitaiImages() error {
 	excludedWords := loadExcludedWords()
 	_ = excludedWords // Will be used by database insertion
 	
+	// Load timestamp mapping
+	timestampMapping, err := LoadTimestampMapping()
+	if err != nil {
+		return fmt.Errorf("failed to load timestamp mapping: %v", err)
+	}
+	
 	// Fetch first page of images
 	images, _, err := app.fetchCivitaiImages(config, "")
 	if err != nil {
@@ -397,11 +422,18 @@ func (app *App) checkForNewCivitaiImages() error {
 			continue
 		}
 		
+		// Update timestamp mapping
+		updateTimestampMapping(timestampMapping, img)
+		
 		if downloaded {
 			newImagesCount++
 			fmt.Printf("Downloaded new image %d\n", img.ID)
-			
 		}
+	}
+	
+	// Save timestamp mapping
+	if err := saveTimestampMapping(timestampMapping); err != nil {
+		fmt.Printf("Warning: Failed to save timestamp mapping: %v\n", err)
 	}
 	
 	if newImagesCount > 0 {
@@ -411,4 +443,57 @@ func (app *App) checkForNewCivitaiImages() error {
 	}
 	
 	return nil
+}
+
+// TimestampMapping represents the structure of civitai_timestamps.json
+type TimestampMapping map[string]string // filename -> createdAt
+
+// LoadTimestampMapping loads the timestamp mapping from civitai_timestamps.json
+func LoadTimestampMapping() (TimestampMapping, error) {
+	mapping := make(TimestampMapping)
+	
+	file, err := os.Open("civitai_timestamps.json")
+	if err != nil {
+		// File doesn't exist yet, return empty mapping
+		if os.IsNotExist(err) {
+			return mapping, nil
+		}
+		return nil, fmt.Errorf("failed to open timestamp mapping: %v", err)
+	}
+	defer file.Close()
+	
+	if err := json.NewDecoder(file).Decode(&mapping); err != nil {
+		return nil, fmt.Errorf("failed to decode timestamp mapping: %v", err)
+	}
+	
+	return mapping, nil
+}
+
+// saveTimestampMapping saves the timestamp mapping to civitai_timestamps.json
+func saveTimestampMapping(mapping TimestampMapping) error {
+	file, err := os.Create("civitai_timestamps.json")
+	if err != nil {
+		return fmt.Errorf("failed to create timestamp mapping file: %v", err)
+	}
+	defer file.Close()
+	
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ") // Pretty print
+	if err := encoder.Encode(mapping); err != nil {
+		return fmt.Errorf("failed to encode timestamp mapping: %v", err)
+	}
+	
+	return nil
+}
+
+// updateTimestampMapping adds an image's timestamp to the mapping
+func updateTimestampMapping(mapping TimestampMapping, img CivitaiImage) {
+	// Determine file extension from URL
+	ext := filepath.Ext(img.URL)
+	if ext == "" {
+		ext = ".jpg"
+	}
+	
+	filename := fmt.Sprintf("%d%s", img.ID, ext)
+	mapping[filename] = img.CreatedAt
 }
