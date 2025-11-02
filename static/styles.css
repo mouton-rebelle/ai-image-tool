@@ -1,30 +1,30 @@
 /* Base styles */
-body { 
-    font-family: Arial, sans-serif; 
-    margin: 0; 
-    padding: 0; 
-    background: #16253c; 
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background: #16253c;
 }
 
-.container { 
-    max-width: 1200px; 
-    margin: 0 auto; 
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
     padding: 0 20px;
     padding-top: 130px; /* Space for fixed header */
 }
 
-.header { 
-    background: white; 
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15); 
+.header {
+    background: white;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     position: fixed;
     padding: 20px;
     top: 0;
     left: 0;
-    right:0;
+    right: 0;
     z-index: 100;
     h1 {
         color: deeppink;
-        margin:0;
+        margin: 0;
         font-size: 18px;
         font-weight: 500;
         margin-bottom: 4px;
@@ -38,10 +38,10 @@ body {
 }
 
 /* Search form */
-.search-form { 
-    display: grid; 
+.search-form {
+    display: grid;
     grid-template-columns: 1fr auto;
-    grid-gap: 10px; 
+    grid-gap: 10px;
 }
 
 .search-actions {
@@ -56,11 +56,11 @@ body {
     grid-gap: 10px;
 }
 
-.prompt-input { 
-    width: calc(100% - 20px); 
-    padding: 10px; 
-    border: 1px solid #ddd; 
-    border-radius: 4px; 
+.prompt-input {
+    width: calc(100% - 20px);
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
 }
 
 .model-select {
@@ -78,17 +78,17 @@ body {
     box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
 }
 
-.search-btn { 
-    padding: 10px 20px; 
-    background: deeppink; 
-    color: white; 
-    border: none; 
-    border-radius: 4px; 
-    cursor: pointer; 
+.search-btn {
+    padding: 10px 20px;
+    background: deeppink;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
 }
 
-.search-btn:hover { 
-    background: #0056b3; 
+.search-btn:hover {
+    background: #0056b3;
 }
 
 .clear-btn {
@@ -112,29 +112,22 @@ body {
 }
 
 /* Image grid - masonry layout */
-.pages-container {
-    width: 100%;
-}
-
-.image-grid { 
+.image-grid {
     width: 100%;
     margin: 0 auto;
 }
 
-.page-grid {
-    margin-bottom: 40px;
-    border-bottom: 2px solid #eee;
-    padding-bottom: 20px;
-}
-
-.image-card { 
+.image-card {
     /* Width will be set dynamically by JavaScript */
     margin-bottom: 15px;
-    border-radius: 8px; 
+    border-radius: 8px;
     overflow: hidden;
-    outline:2px solid rgba(255,255,255,0); 
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    transition: transform 0.2s ease, box-shadow 0.2s ease, outline 0.2s ease-in-out;
+    outline: 2px solid rgba(255, 255, 255, 0);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transition:
+        transform 0.2s ease,
+        box-shadow 0.2s ease,
+        outline 0.2s ease-in-out;
 }
 
 /* Responsive breakpoints for layout (not image cards) */
@@ -144,20 +137,20 @@ body {
         padding: 0 10px;
         padding-top: 220px; /* More space for mobile header */
     }
-    
+
     .header {
         padding: 15px;
     }
-    
+
     .search-inputs {
         grid-template-columns: 1fr; /* Stack inputs vertically on mobile */
         grid-gap: 10px;
     }
-    
+
     .search-form {
         grid-template-columns: 1fr; /* Stack search form vertically on mobile */
     }
-    
+
     .search-actions {
         justify-content: center;
         margin-top: 10px;
@@ -173,39 +166,39 @@ body {
 
 .image-card:hover {
     transform: translateY(-4px);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-    outline: 2px solid rgba(255,255,255,0.7);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    outline: 2px solid rgba(255, 255, 255, 0.7);
 }
 
 /* Loading and utility */
-.loading { 
-    text-align: center; 
-    padding: 20px; 
-    color: #666; 
+.loading {
+    text-align: center;
+    padding: 20px;
+    color: #666;
 }
 
-.scroll-trigger { 
-    height: 1px; 
+.scroll-trigger {
+    height: 1px;
 }
 
-#load-more { 
-    text-align: center; 
-    padding: 20px; 
-    display: none; 
+#load-more {
+    text-align: center;
+    padding: 20px;
+    display: none;
 }
 
-.search-results-info { 
-    text-align: center; 
-    padding: 10px; 
-    color: #666; 
-    font-size: 14px; 
+.search-results-info {
+    text-align: center;
+    padding: 10px;
+    color: #666;
+    font-size: 14px;
 }
 
 /* Filter buttons */
-.filter-buttons { 
-    display: none; 
-    gap: 10px; 
-    margin-top: 15px; 
+.filter-buttons {
+    display: none;
+    gap: 10px;
+    margin-top: 15px;
     justify-content: center;
 }
 
@@ -213,24 +206,24 @@ body {
     display: flex;
 }
 
-.filter-btn { 
-    background: #f8f9fa; 
-    color: #333; 
-    border: 1px solid #ddd; 
-    padding: 8px 16px; 
-    border-radius: 4px; 
-    cursor: pointer; 
+.filter-btn {
+    background: #f8f9fa;
+    color: #333;
+    border: 1px solid #ddd;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
     transition: all 0.3s;
 }
 
-.filter-btn:hover { 
-    background: #e9ecef; 
+.filter-btn:hover {
+    background: #e9ecef;
 }
 
-.filter-btn.active { 
-    background: #007bff; 
-    color: white; 
-    border-color: #007bff; 
+.filter-btn.active {
+    background: #007bff;
+    color: white;
+    border-color: #007bff;
 }
 
 /* Lightbox styles */
@@ -267,7 +260,8 @@ body {
     opacity: 0.7;
 }
 
-.lightbox-prev, .lightbox-next {
+.lightbox-prev,
+.lightbox-next {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
@@ -290,7 +284,8 @@ body {
     right: 20px;
 }
 
-.lightbox-prev:hover, .lightbox-next:hover {
+.lightbox-prev:hover,
+.lightbox-next:hover {
     background: rgba(0, 0, 0, 0.8);
 }
 
@@ -368,7 +363,9 @@ body {
 
 .clickable-seed {
     cursor: pointer;
-    transition: background-color 0.3s, color 0.3s;
+    transition:
+        background-color 0.3s,
+        color 0.3s;
 }
 
 .clickable-seed:hover {
@@ -424,7 +421,9 @@ body {
 
 .clickable-prompt {
     cursor: pointer;
-    transition: background-color 0.3s, color 0.3s;
+    transition:
+        background-color 0.3s,
+        color 0.3s;
     padding: 8px;
     border-radius: 4px;
     border: 1px solid transparent;
@@ -489,13 +488,13 @@ body {
         max-height: 95vh;
         overflow-y: auto;
     }
-    
+
     .lightbox img {
         max-width: 100%;
         max-height: 60vh;
         flex-shrink: 0;
     }
-    
+
     .lightbox-metadata {
         width: 100%;
         max-width: none;
@@ -509,7 +508,7 @@ body {
     .lightbox img {
         max-width: calc(100% - 280px);
     }
-    
+
     .lightbox-metadata {
         width: 260px;
         min-width: 260px;

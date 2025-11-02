@@ -28,24 +28,24 @@
                     <button type="button" class="clear-btn" id="clear-btn" onclick="clearFilters()" title="Clear all filters" disabled>✕</button>
                 </div>
             </form>
-            
+
             <div class="filter-buttons">
                 <button class="filter-btn{{if eq .NSFWFilter "all"}} active{{end}}" onclick="setNSFWFilter('all')">All</button>
                 <button class="filter-btn{{if eq .NSFWFilter "sfw"}} active{{end}}" onclick="setNSFWFilter('sfw')">SFW Only</button>
                 <button class="filter-btn{{if eq .NSFWFilter "nsfw"}} active{{end}}" onclick="setNSFWFilter('nsfw')">NSFW Only</button>
             </div>
         </div>
-        
+
         <div id="image-results" hx-get="{{.InitialURL}}" hx-trigger="load">
             <div class="loading">Loading images...</div>
         </div>
-        
-        <div id="load-more" style="display: none;" hx-target="#pages-container" hx-swap="beforeend" 
+
+        <div id="load-more" style="display: none;" hx-target="#unified-grid" hx-swap="beforeend"
              hx-trigger="intersect once" hx-indicator=".loading">
             <div class="loading">Loading more images...</div>
         </div>
     </div>
-    
+
     <!-- Lightbox -->
     <div id="lightbox" class="lightbox">
         <span class="lightbox-close">&times;</span>
@@ -87,162 +87,162 @@
             </div>
         </div>
     </div>
-    
+
     <script>
     function setNSFWFilter(filter) {
         // Update hidden input
         document.getElementById('nsfw-filter').value = filter;
-        
+
         // Update active button
         document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
         event.target.classList.add('active');
-        
+
         // Update current search parameters and reset page
         window.currentNSFWFilter = filter;
         window.currentPage = 1; // Reset to page 1
-        
+
         // Trigger search with new filter
         const promptInput = document.querySelector('.prompt-input');
         const modelSelect = document.querySelector('.model-select');
         const promptValue = promptInput.value;
         const modelValue = modelSelect.value;
-        
+
         let url;
         const params = new URLSearchParams();
         params.set('page', '1');
-        
+
         // Always set nsfw parameter to preserve filter state
         params.set('nsfw', filter);
-        
+
         if (promptValue.trim() !== '') {
             params.set('q', promptValue);
         }
-        
+
         if (modelValue !== 'all') {
             params.set('model', modelValue);
         }
-        
+
         if (params.get('q') || params.get('model')) {
             url = `/search?${params.toString()}`;
         } else {
             url = `/api/images?${params.toString()}`;
         }
-        
+
         // Reset and update the request
         const imageResults = document.getElementById('image-results');
         const loadMore = document.getElementById('load-more');
-        
+
         // Clear existing content immediately
         imageResults.innerHTML = '<div class="loading">Loading images...</div>';
-        
+
         // Hide load more temporarily
         if (loadMore) {
             loadMore.style.display = 'none';
         }
-        
+
         // Make the HTMX request directly
         htmx.ajax('GET', url, {
             target: '#image-results',
             swap: 'innerHTML'
         });
-        
+
         // Update URL after search
         setTimeout(window.updateURL, 100);
     }
-    
+
     function clearFilters() {
         // Clear only prompt and model inputs (not NSFW filter)
         const promptInput = document.querySelector('.prompt-input');
         const modelSelect = document.querySelector('.model-select');
         const nsfwFilter = document.getElementById('nsfw-filter');
-        
+
         promptInput.value = '';
         modelSelect.value = 'all';
-        
+
         // Update current search parameters (preserve NSFW filter)
         window.currentModel = 'all';
         window.currentSearch = '';
         window.currentPage = 1;
-        
+
         // Get current NSFW filter value
         const currentNSFWFilter = nsfwFilter.value;
-        
+
         // Build URL with current NSFW filter
         const params = new URLSearchParams();
         params.set('page', '1');
         params.set('nsfw', currentNSFWFilter);
-        
+
         const url = `/api/images?${params.toString()}`;
-        
+
         // Load images with current NSFW filter
         const imageResults = document.getElementById('image-results');
         const loadMore = document.getElementById('load-more');
-        
+
         // Clear existing content immediately
         imageResults.innerHTML = '<div class="loading">Loading images...</div>';
-        
+
         // Hide load more temporarily
         if (loadMore) {
             loadMore.style.display = 'none';
         }
-        
+
         // Make the HTMX request
         htmx.ajax('GET', url, {
             target: '#image-results',
             swap: 'innerHTML'
         });
-        
+
         // Update URL to preserve NSFW filter
         const newURL = currentNSFWFilter === 'all' ? '/' : `/?nsfw=${currentNSFWFilter}`;
         history.replaceState(null, '', newURL);
-        
+
         // Update clear button state
         updateClearButtonState();
     }
-    
+
     function hasActiveFilters() {
         const promptInput = document.querySelector('.prompt-input');
         const modelSelect = document.querySelector('.model-select');
-        
+
         return (promptInput && promptInput.value.trim() !== '') ||
                (modelSelect && modelSelect.value !== 'all');
     }
-    
+
     function updateClearButtonState() {
         const clearBtn = document.getElementById('clear-btn');
         if (clearBtn) {
             clearBtn.disabled = !hasActiveFilters();
         }
     }
-    
+
     // Initialize filter state (will be updated from form values)
     window.currentNSFWFilter = '{{.NSFWFilter}}';
     window.currentModel = '{{if gt .SelectedModelID 0}}{{.SelectedModelID}}{{else}}all{{end}}';
     window.currentSearch = '{{.SearchQuery}}';
-    
+
     // Function to update URL with current search parameters
     window.updateURL = function() {
         const params = new URLSearchParams();
-        
+
         const promptInput = document.querySelector('.prompt-input');
         const modelSelect = document.querySelector('.model-select');
-        
+
         if (promptInput && promptInput.value.trim() !== '') {
             params.set('q', promptInput.value.trim());
         }
-        
+
         if (modelSelect && modelSelect.value !== 'all') {
             params.set('model', modelSelect.value);
         }
-        
+
         if (window.currentNSFWFilter) {
             params.set('nsfw', window.currentNSFWFilter);
         }
-        
+
         const newURL = params.toString() ? `/?${params.toString()}` : '/';
         history.replaceState(null, '', newURL);
     };
-    
+
     // Function to initialize JavaScript state from form values (set by server)
     window.initializeFromForm = function() {
         // Set current search from prompt input value
@@ -250,20 +250,20 @@
         if (promptInput && promptInput.value) {
             window.currentSearch = promptInput.value;
         }
-        
+
         // Set current model from select value
         const modelSelect = document.querySelector('.model-select');
         if (modelSelect) {
             window.currentModel = modelSelect.value;
         }
-        
+
         // Set current NSFW filter from hidden field value
         const nsfwField = document.getElementById('nsfw-filter');
         if (nsfwField) {
             window.currentNSFWFilter = nsfwField.value;
         }
     };
-    
+
     // Update the image count in the header
     window.updateImageCount = function() {
         const countElement = document.getElementById('image-count');
@@ -275,7 +275,7 @@
             countElement.textContent = countText;
         }
     };
-    
+
     // Toggle filter visibility with Ctrl+D
     document.addEventListener('keydown', function(event) {
         if (event.ctrlKey && event.key === 'd') {
@@ -284,7 +284,7 @@
             filterButtons.classList.toggle('visible');
         }
     });
-    
+
     // Update hidden NSFW field before each search request
     document.addEventListener('htmx:configRequest', function(event) {
         if (event.detail.path.includes('/search') || event.detail.path.includes('/api/images')) {
@@ -293,7 +293,7 @@
             if (nsfwField && window.currentNSFWFilter) {
                 nsfwField.value = window.currentNSFWFilter;
             }
-            
+
             // Capture current model selection
             const modelSelect = document.querySelector('.model-select');
             if (modelSelect) {
@@ -301,7 +301,7 @@
             }
         }
     });
-    
+
     // Update URL after successful HTMX requests
     document.addEventListener('htmx:afterSettle', function(event) {
         if (event.detail.target && (event.detail.target.id === 'image-results')) {
@@ -314,9 +314,9 @@
                 }
             }, 100);
         }
-        
+
         // Also rebuild when new pages are loaded via load-more
-        if (event.detail.target && (event.detail.target.id === 'pages-container')) {
+        if (event.detail.target && (event.detail.target.id === 'unified-grid')) {
             setTimeout(function() {
                 if (window.buildLightboxImageList) {
                     window.buildLightboxImageList();
@@ -324,7 +324,7 @@
             }, 100);
         }
     });
-    
+
     // Initialize JavaScript state from form values on page load
     document.addEventListener('DOMContentLoaded', function() {
         // Small delay to ensure all elements are ready
@@ -336,44 +336,44 @@
             }
             // Initialize clear button state
             updateClearButtonState();
-            
+
             // Add event listeners for form changes
             const promptInput = document.querySelector('.prompt-input');
             const modelSelect = document.querySelector('.model-select');
-            
+
             if (promptInput) {
                 promptInput.addEventListener('input', updateClearButtonState);
             }
-            
+
             if (modelSelect) {
                 modelSelect.addEventListener('change', updateClearButtonState);
             }
         }, 50);
     });
-    
+
     // Rebuild lightbox image list when new pages are loaded
     document.addEventListener('pageLoaded', function() {
         if (window.buildLightboxImageList) {
             window.buildLightboxImageList();
         }
     });
-    
-    
+
+
     // Lightbox functionality
     window.currentLightboxIndex = 0;
     window.lightboxImages = [];
     window.lightboxMetadata = [];
-    
+
     // Function to decode HTML entities
     window.decodeHtmlEntities = function(text) {
         const textarea = document.createElement('textarea');
         textarea.innerHTML = text;
         return textarea.value;
     };
-    
+
     window.buildLightboxImageList = function() {
-        // Get all image cards from all loaded pages (across all page-grid containers)
-        const imageCards = document.querySelectorAll('.page-grid .image-card a');
+        // Get all image cards from the unified grid
+        const imageCards = document.querySelectorAll('#unified-grid .image-card a');
         window.lightboxImages = Array.from(imageCards).map(link => link.href);
         // Extract metadata from data attributes
         window.lightboxMetadata = Array.from(imageCards).map(link => {
@@ -393,7 +393,7 @@
             };
         });
     };
-    
+
     window.openLightboxFromData = function(element, imageSrc) {
         const model = window.decodeHtmlEntities(element.getAttribute('data-model') || '');
         const steps = element.getAttribute('data-steps') || '';
@@ -404,14 +404,14 @@
         const prompt = window.decodeHtmlEntities(element.getAttribute('data-prompt') || '');
         const negPrompt = window.decodeHtmlEntities(element.getAttribute('data-neg-prompt') || '');
         const loras = element.getAttribute('data-loras') || '';
-        
+
         window.openLightbox(imageSrc, element.getAttribute('data-image-id'), model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras);
     };
-    
+
     window.openLightbox = function(imageSrc, id, model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras) {
         // Build/update the image list
         window.buildLightboxImageList();
-        
+
         // Find current image index by ID (more reliable than URL comparison)
         window.currentLightboxIndex = window.lightboxMetadata.findIndex(meta => meta.id === id);
         if (window.currentLightboxIndex === -1) {
@@ -421,39 +421,39 @@
                 window.currentLightboxIndex = 0;
             }
         }
-        
+
         const lightbox = document.getElementById('lightbox');
         const lightboxImg = document.getElementById('lightbox-img');
         lightboxImg.src = imageSrc;
-        
+
         // Populate metadata
         window.populateLightboxMetadata(model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras);
-        
+
         lightbox.classList.add('active');
-        
+
         // Prevent body scroll
         document.body.style.overflow = 'hidden';
-        
+
         // Update arrow visibility
         window.updateArrowVisibility();
     };
-    
+
     window.populateLightboxMetadata = function(model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras) {
         // Clean model name - remove .safetensors extension
         let cleanModel = model || 'Unknown Model';
         if (cleanModel.endsWith('.safetensors')) {
             cleanModel = cleanModel.slice(0, -12); // Remove ".safetensors"
         }
-        
+
         // Split model name and version if they're combined with " - "
         const modelElement = document.getElementById('lightbox-model');
         const versionElement = document.getElementById('lightbox-version');
-        
+
         if (cleanModel.includes(' - ')) {
             const parts = cleanModel.split(' - ');
             const modelName = parts[0];
             const versionName = parts.slice(1).join(' - '); // In case there are multiple " - " in the name
-            
+
             modelElement.textContent = modelName;
             versionElement.textContent = versionName;
             versionElement.style.display = 'block';
@@ -461,14 +461,14 @@
             modelElement.textContent = cleanModel;
             versionElement.style.display = 'none';
         }
-        
+
         modelElement.title = model || 'Unknown Model'; // Show full name on hover
-        
+
         // Parameters
         document.getElementById('lightbox-steps').textContent = steps ? `Steps: ${steps}` : '';
         document.getElementById('lightbox-cfg').textContent = cfg ? `CFG: ${cfg}` : '';
         document.getElementById('lightbox-sampler').textContent = sampler ? `Sampler: ${sampler}` : '';
-        
+
         // Scheduler - hide if empty
         const schedulerElement = document.getElementById('lightbox-scheduler');
         if (scheduler && scheduler.trim()) {
@@ -477,10 +477,10 @@
         } else {
             schedulerElement.style.display = 'none';
         }
-        
+
         // Seed
         document.getElementById('lightbox-seed').textContent = seed ? `Seed: ${seed}` : 'Seed: N/A';
-        
+
         // LoRAs
         const lorasSection = document.getElementById('lightbox-loras-section');
         const lorasContainer = document.getElementById('lightbox-loras');
@@ -500,10 +500,10 @@
         } else {
             lorasSection.style.display = 'none';
         }
-        
+
         // Prompts
         document.getElementById('lightbox-prompt').textContent = prompt || 'No prompt available';
-        
+
         const negSection = document.getElementById('lightbox-neg-section');
         const negPromptEl = document.getElementById('lightbox-neg-prompt');
         if (negPrompt && negPrompt.trim()) {
@@ -512,11 +512,11 @@
         } else {
             negSection.style.display = 'none';
         }
-        
+
         // Store current data for copying
         window.currentPromptData = { prompt: prompt || '', negPrompt: negPrompt || '' };
         window.currentSeed = seed || '';
-        
+
         // Update category toggle button based on current image's NSFW status
         const currentImageData = window.lightboxMetadata[window.currentLightboxIndex];
         const categoryToggleText = document.getElementById('category-toggle-text');
@@ -524,51 +524,51 @@
             categoryToggleText.textContent = currentImageData.is_nsfw ? 'show' : 'hide';
         }
     };
-    
+
     window.closeLightbox = function() {
         const lightbox = document.getElementById('lightbox');
         lightbox.classList.remove('active');
-        
+
         // Restore body scroll
         document.body.style.overflow = '';
     };
-    
+
     window.showPrevImage = function() {
         if (window.currentLightboxIndex > 0) {
             window.currentLightboxIndex--;
             const lightboxImg = document.getElementById('lightbox-img');
             lightboxImg.src = window.lightboxImages[window.currentLightboxIndex];
-            
+
             // Update metadata for current image
             const metadata = window.lightboxMetadata[window.currentLightboxIndex];
             if (metadata) {
                 window.populateLightboxMetadata(metadata.model, metadata.steps, metadata.cfg, metadata.sampler, metadata.scheduler, metadata.seed, metadata.prompt, metadata.negPrompt, metadata.loras);
             }
-            
+
             window.updateArrowVisibility();
         }
     };
-    
+
     window.showNextImage = function() {
         if (window.currentLightboxIndex < window.lightboxImages.length - 1) {
             window.currentLightboxIndex++;
             const lightboxImg = document.getElementById('lightbox-img');
             lightboxImg.src = window.lightboxImages[window.currentLightboxIndex];
-            
+
             // Update metadata for current image
             const metadata = window.lightboxMetadata[window.currentLightboxIndex];
             if (metadata) {
                 window.populateLightboxMetadata(metadata.model, metadata.steps, metadata.cfg, metadata.sampler, metadata.scheduler, metadata.seed, metadata.prompt, metadata.negPrompt, metadata.loras);
             }
-            
+
             window.updateArrowVisibility();
         }
     };
-    
+
     // Generic copy function with visual feedback
     function copyWithFeedback(text, elementId, itemName) {
         if (!text) return;
-        
+
         // Copy to clipboard with fallback
         if (navigator.clipboard && window.isSecureContext) {
             navigator.clipboard.writeText(text).then(() => showCopyFeedback(elementId)).catch(err => showCopyError(itemName, err));
@@ -582,7 +582,7 @@
             document.body.appendChild(textArea);
             textArea.focus();
             textArea.select();
-            
+
             try {
                 const result = document.execCommand('copy');
                 document.body.removeChild(textArea);
@@ -597,21 +597,21 @@
             }
         }
     }
-    
+
     function showCopyFeedback(elementId) {
         const element = document.getElementById(elementId);
         if (!element) return;
-        
+
         const originalBg = element.style.backgroundColor;
         element.style.backgroundColor = '#28a745';
         element.style.color = 'white';
-        
+
         setTimeout(function() {
             element.style.backgroundColor = originalBg;
             element.style.color = '';
         }, 1000);
     }
-    
+
     function showCopyError(itemName, err) {
         console.error(`Failed to copy ${itemName}: `, err);
         alert(`Failed to copy ${itemName} to clipboard`);
@@ -621,27 +621,27 @@
         const text = window.currentPromptData?.prompt;
         copyWithFeedback(text, 'lightbox-prompt', 'positive prompt');
     };
-    
+
     window.copyNegativePrompt = function() {
         const text = window.currentPromptData?.negPrompt;
         copyWithFeedback(text, 'lightbox-neg-prompt', 'negative prompt');
     };
-    
+
     window.copySeed = function() {
         copyWithFeedback(window.currentSeed, 'lightbox-seed', 'seed');
     };
-    
+
     window.toggleImageCategory = function() {
         const currentImageData = window.lightboxMetadata[window.currentLightboxIndex];
         if (!currentImageData || !currentImageData.id) return;
-        
+
         const button = document.getElementById('category-toggle-btn');
         const buttonText = document.getElementById('category-toggle-text');
-        
+
         // Disable button during request
         button.disabled = true;
         buttonText.textContent = '...';
-        
+
         // Make API request to toggle category
         fetch('/api/toggle-category', {
             method: 'POST',
@@ -657,25 +657,25 @@
             if (data.success) {
                 // Update the current metadata
                 const newCategory = data.new_category; // 'sfw' or 'nsfw'
-                
+
                 // Update the button text
                 buttonText.textContent = newCategory === 'nsfw' ? 'show' : 'hide';
-                
+
                 // Update the current image's metadata in our array
                 currentImageData.is_nsfw = newCategory === 'nsfw';
-                
+
                 // Show success feedback
                 button.style.backgroundColor = '#28a745';
                 button.style.color = 'white';
-                
+
                 setTimeout(function() {
                     button.style.backgroundColor = '';
                     button.style.color = '';
                 }, 1000);
-                
+
                 // If we're currently filtering by category, this image should disappear from the view
                 // We'll let the user refresh or navigate away naturally
-                
+
             } else {
                 alert('Failed to move image: ' + (data.error || 'Unknown error'));
                 buttonText.textContent = 'hide';
@@ -690,18 +690,18 @@
             button.disabled = false;
         });
     };
-    
+
     window.updateArrowVisibility = function() {
         const prevBtn = document.querySelector('.lightbox-prev');
         const nextBtn = document.querySelector('.lightbox-next');
-        
+
         prevBtn.style.opacity = window.currentLightboxIndex > 0 ? '1' : '0.3';
         nextBtn.style.opacity = window.currentLightboxIndex < window.lightboxImages.length - 1 ? '1' : '0.3';
-        
+
         prevBtn.style.cursor = window.currentLightboxIndex > 0 ? 'pointer' : 'default';
         nextBtn.style.cursor = window.currentLightboxIndex < window.lightboxImages.length - 1 ? 'pointer' : 'default';
     };
-    
+
     // Close lightbox on click outside content
     document.getElementById('lightbox').addEventListener('click', function(e) {
         // Close if clicking on the lightbox backdrop or the content container (but not its children)
@@ -709,31 +709,31 @@
             closeLightbox();
         }
     });
-    
+
     // Prevent clicks on image and metadata from closing lightbox
     document.getElementById('lightbox-img').addEventListener('click', function(e) {
         e.stopPropagation();
     });
-    
+
     document.querySelector('.lightbox-metadata').addEventListener('click', function(e) {
         e.stopPropagation();
     });
-    
+
     // Close lightbox with X button
     document.querySelector('.lightbox-close').addEventListener('click', function() {
         closeLightbox();
     });
-    
+
     // Previous image button
     document.querySelector('.lightbox-prev').addEventListener('click', function() {
         showPrevImage();
     });
-    
+
     // Next image button
     document.querySelector('.lightbox-next').addEventListener('click', function() {
         showNextImage();
     });
-    
+
     // Keyboard navigation
     document.addEventListener('keydown', function(e) {
         const lightbox = document.getElementById('lightbox');
@@ -753,24 +753,24 @@
             }
         }
     });
-    
-    // Global Masonry Manager for responsive behavior
+
+    // Global Masonry Manager for single unified grid with infinite scroll
     window.MasonryManager = (function() {
-        const instances = new Map();
+        let masonryInstance = null;
+        let mainGrid = null;
         const GUTTER = 15;
         const MIN_COLUMN_WIDTH = 250;
         let globalResizeTimeout;
         let resizeObserver;
-        
+
         // Calculate optimal column width based on container width
         function calculateColumnWidth(containerWidth) {
-            // Use the full container width without subtracting padding
             const availableWidth = containerWidth;
             const columns = Math.max(1, Math.floor((availableWidth + GUTTER) / (MIN_COLUMN_WIDTH + GUTTER)));
             const columnWidth = Math.floor((availableWidth - (GUTTER * (columns - 1))) / columns);
             return { columnWidth, columns };
         }
-        
+
         // Set dynamic column widths for image cards
         function setColumnWidths(grid, columnWidth) {
             const cards = grid.querySelectorAll('.image-card');
@@ -778,48 +778,50 @@
                 card.style.width = columnWidth + 'px';
             });
         }
-        
-        // Initialize masonry for a grid
+
+        // Initialize masonry for the unified grid (called once on first page load)
         function initializeGrid(grid) {
-            if (!grid || instances.has(grid)) return;
-            
-            // Get the actual grid container width, fallback to parent if needed
+            if (!grid || masonryInstance) return;
+
+            mainGrid = grid;
+
+            // Get the actual grid container width
             let containerWidth = grid.getBoundingClientRect().width;
             if (containerWidth === 0) {
                 containerWidth = grid.parentElement.getBoundingClientRect().width;
             }
-            
+
             const { columnWidth } = calculateColumnWidth(containerWidth);
-            
+
             // Set column widths
             setColumnWidths(grid, columnWidth);
-            
+
             // Wait for images to load
             const images = grid.querySelectorAll('img');
             let loadedCount = 0;
             const totalImages = images.length;
-            
+
             function createMasonryInstance() {
                 // Ensure grid uses full width
                 grid.style.width = '100%';
-                
-                const instance = new Masonry(grid, {
+
+                masonryInstance = new Masonry(grid, {
                     itemSelector: '.image-card',
                     gutter: GUTTER,
                     horizontalOrder: true,
                     containerStyle: { position: 'relative', width: '100%' }
                 });
-                
-                instances.set(grid, instance);
-                
-                // Set up resize observer for this grid if not already done
+
+                // Set up resize observer
                 if (!resizeObserver) {
                     setupResizeObserver();
                 }
-                
-                return instance;
+
+                console.log('Masonry instance initialized');
+
+                return masonryInstance;
             }
-            
+
             if (totalImages === 0) {
                 createMasonryInstance();
             } else {
@@ -840,34 +842,100 @@
                 });
             }
         }
-        
+
+        // Append new items to existing masonry instance (called when loading more pages)
+        function appendItems() {
+            if (!masonryInstance || !mainGrid) {
+                console.warn('Cannot append items: Masonry instance not initialized');
+                return;
+            }
+
+            // Get newly added image cards (those without width set)
+            const allCards = mainGrid.querySelectorAll('.image-card');
+            const newCards = Array.from(allCards).filter(card => !card.style.width);
+
+            if (newCards.length === 0) {
+                console.log('No new items to append');
+                return;
+            }
+
+            console.log('Appending', newCards.length, 'new items to Masonry');
+
+            // Get current column width
+            let containerWidth = mainGrid.getBoundingClientRect().width;
+            if (containerWidth === 0) {
+                containerWidth = mainGrid.parentElement.getBoundingClientRect().width;
+            }
+            const { columnWidth } = calculateColumnWidth(containerWidth);
+
+            // Set width for new cards
+            newCards.forEach(card => {
+                card.style.width = columnWidth + 'px';
+            });
+
+            // Wait for new images to load before appending
+            const newImages = mainGrid.querySelectorAll('.image-card:not([data-loaded]) img');
+            let loadedCount = 0;
+            const totalImages = newImages.length;
+
+            function appendToMasonry() {
+                // Mark all current cards as loaded
+                allCards.forEach(card => card.setAttribute('data-loaded', 'true'));
+
+                // Append new elements to Masonry
+                masonryInstance.appended(newCards);
+
+                // Force layout update
+                masonryInstance.layout();
+
+                console.log('New items appended and layout updated');
+            }
+
+            if (totalImages === 0) {
+                appendToMasonry();
+            } else {
+                newImages.forEach(img => {
+                    if (img.complete) {
+                        loadedCount++;
+                        if (loadedCount === totalImages) {
+                            appendToMasonry();
+                        }
+                    } else {
+                        img.addEventListener('load', () => {
+                            loadedCount++;
+                            if (loadedCount === totalImages) {
+                                appendToMasonry();
+                            }
+                        });
+                    }
+                });
+            }
+        }
+
         // Handle resize with debouncing
         function handleResize() {
             clearTimeout(globalResizeTimeout);
             globalResizeTimeout = setTimeout(() => {
-                instances.forEach((instance, grid) => {
-                    if (document.contains(grid)) {
-                        // Get the actual grid container width, fallback to parent if needed
-                        let containerWidth = grid.getBoundingClientRect().width;
-                        if (containerWidth === 0) {
-                            containerWidth = grid.parentElement.getBoundingClientRect().width;
-                        }
-                        
-                        const { columnWidth } = calculateColumnWidth(containerWidth);
-                        
-                        // Update column widths
-                        setColumnWidths(grid, columnWidth);
-                        
-                        // Relayout masonry
-                        instance.layout();
-                    } else {
-                        // Clean up removed grids
-                        instances.delete(grid);
+                if (masonryInstance && mainGrid && document.contains(mainGrid)) {
+                    // Get the actual grid container width
+                    let containerWidth = mainGrid.getBoundingClientRect().width;
+                    if (containerWidth === 0) {
+                        containerWidth = mainGrid.parentElement.getBoundingClientRect().width;
                     }
-                });
+
+                    const { columnWidth } = calculateColumnWidth(containerWidth);
+
+                    // Update column widths for all cards
+                    setColumnWidths(mainGrid, columnWidth);
+
+                    // Relayout masonry
+                    masonryInstance.layout();
+
+                    console.log('Masonry layout updated after resize');
+                }
             }, 250);
         }
-        
+
         // Set up ResizeObserver for better performance
         function setupResizeObserver() {
             if (window.ResizeObserver) {
@@ -878,12 +946,12 @@
                 window.addEventListener('resize', handleResize);
             }
         }
-        
+
         // Public API
         return {
             initializeGrid: initializeGrid,
-            handleResize: handleResize,
-            instances: instances
+            appendItems: appendItems,
+            handleResize: handleResize
         };
     })();
     </script>

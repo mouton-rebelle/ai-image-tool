@@ -1,9 +1,8 @@
 {{if eq .CurrentPage 1}}
-<div class="pages-container" id="pages-container">
-<div class="image-grid page-grid" id="page-{{.CurrentPage}}" data-page="{{.CurrentPage}}">
+<div class="image-grid" id="unified-grid">
 {{range .Images}}
     <div class="image-card">
-        <a href="{{.ImageURL}}" 
+        <a href="{{.ImageURL}}"
            data-image-id="{{.ID}}"
            data-model="{{.Model}}"
            data-steps="{{.Steps}}"
@@ -21,7 +20,6 @@
     </div>
 {{end}}
 </div>
-</div>
 
 <script>
 window.currentPage = {{.CurrentPage}};
@@ -34,11 +32,11 @@ if (window.updateImageCount) {
     window.updateImageCount();
 }
 
-// Initialize Masonry for the current page using global manager
+// Initialize Masonry for the unified grid (first page only)
 if (window.MasonryManager) {
-    const pageGrid = document.getElementById('page-{{.CurrentPage}}');
-    if (pageGrid) {
-        window.MasonryManager.initializeGrid(pageGrid);
+    const unifiedGrid = document.getElementById('unified-grid');
+    if (unifiedGrid) {
+        window.MasonryManager.initializeGrid(unifiedGrid);
     }
 }
 
@@ -50,28 +48,28 @@ if (!window.updateLoadMore) {
             const nextPage = window.currentPage + 1;
             const params = new URLSearchParams();
             params.set('page', nextPage);
-            
+
             if (window.currentSearch && window.currentSearch.trim() !== '') {
                 params.set('q', window.currentSearch);
             }
-            
+
             if (window.currentModel && window.currentModel !== 'all') {
                 params.set('model', window.currentModel);
             }
-            
+
             if (window.currentNSFWFilter && window.currentNSFWFilter !== 'all') {
                 params.set('nsfw', window.currentNSFWFilter);
             }
-            
+
             const url = params.get('q') || params.get('model') ? `/search?${params.toString()}` : `/api/images?${params.toString()}`;
-            
+
             loadMore.setAttribute('hx-get', url);
             loadMore.setAttribute('hx-trigger', 'intersect once');
             loadMore.style.display = 'block';
-            
+
             // Re-initialize HTMX for the updated element
             htmx.process(loadMore);
-            
+
             console.log('Load more updated for next page:', nextPage, 'URL:', url, 'Search:', window.currentSearch, 'Model:', window.currentModel, 'NSFW:', window.currentNSFWFilter);
         } else if (loadMore) {
             loadMore.style.display = 'none';
@@ -80,12 +78,12 @@ if (!window.updateLoadMore) {
     };
 }
 
-// Update search functionality  
+// Update search functionality
 document.addEventListener('htmx:afterRequest', function(event) {
     if (event.detail.xhr.status === 200) {
         const response = event.detail.xhr.responseText;
         console.log('HTMX Request completed for:', event.detail.requestConfig.path);
-        
+
         // Check if this is a new search (target is #image-results)
         if (event.detail.target && event.detail.target.id === 'image-results') {
             // Extract search query from the response
@@ -94,47 +92,47 @@ document.addEventListener('htmx:afterRequest', function(event) {
                 window.currentSearch = searchMatch[1];
                 console.log('Updated search query to:', window.currentSearch);
             }
-            
+
             // Extract total count from the response
             const countMatch = response.match(/window\.totalCount = (\d+)/);
             if (countMatch) {
                 window.totalCount = parseInt(countMatch[1]);
                 console.log('Updated total count to:', window.totalCount);
-                
+
                 // Update the count display
                 if (window.updateImageCount) {
                     window.updateImageCount();
                 }
             }
-            
+
             // Reset page to 1 for new search
             const pageMatch = response.match(/window\.currentPage = (\d+)/);
             if (pageMatch) {
                 window.currentPage = parseInt(pageMatch[1]);
                 console.log('Reset page to:', window.currentPage);
             }
-            
+
             // Preserve current NSFW filter if not explicitly set in response
             if (!window.currentNSFWFilter) {
                 window.currentNSFWFilter = 'all';
             }
             console.log('Current NSFW filter:', window.currentNSFWFilter);
         }
-        
+
         if (response.includes('window.hasMore')) {
             // Only increment page if this is a load-more request (not initial search)
-            if (event.detail.target && event.detail.target.id === 'pages-container') {
+            if (event.detail.target && event.detail.target.id === 'unified-grid') {
                 window.currentPage++;
                 console.log('Load-more: Page incremented to:', window.currentPage);
             }
-            
+
             // Extract hasMore value from the response
             const hasMoreMatch = response.match(/window\.hasMore = (true|false)/);
             if (hasMoreMatch) {
                 window.hasMore = hasMoreMatch[1] === 'true';
                 console.log('hasMore:', window.hasMore);
             }
-            
+
             // Set up load more for next page
             window.updateLoadMore();
         }
@@ -160,12 +158,12 @@ document.addEventListener('htmx:targetError', function(event) {
         const searchParam = window.currentSearch ? `q=${encodeURIComponent(window.currentSearch)}&` : '';
         const nsfwParam = window.currentNSFWFilter && window.currentNSFWFilter !== 'all' ? `nsfw=${window.currentNSFWFilter}&` : '';
         const url = `/search?${searchParam}${nsfwParam}page=${nextPage}`;
-        
+
         loadMore.setAttribute('hx-get', url);
         loadMore.setAttribute('hx-trigger', 'intersect once');
         loadMore.style.display = 'block';
         htmx.process(loadMore);
-        
+
         console.log('Initial load more setup for page:', nextPage, 'URL:', url, 'Search:', window.currentSearch, 'NSFW:', window.currentNSFWFilter);
     } else if (loadMore) {
         loadMore.style.display = 'none';
@@ -173,10 +171,9 @@ document.addEventListener('htmx:targetError', function(event) {
 })();
 </script>
 {{else}}
-<div class="image-grid page-grid" id="page-{{.CurrentPage}}" data-page="{{.CurrentPage}}">
 {{range .Images}}
 <div class="image-card">
-    <a href="{{.ImageURL}}" 
+    <a href="{{.ImageURL}}"
        data-image-id="{{.ID}}"
        data-model="{{.Model}}"
        data-steps="{{.Steps}}"
@@ -193,17 +190,13 @@ document.addEventListener('htmx:targetError', function(event) {
     </a>
 </div>
 {{end}}
-</div>
 <script>
 window.hasMore = {{.HasNext}};
 window.totalCount = {{.TotalCount}};
 
-// Initialize Masonry for the current page using global manager
+// Append new items to existing Masonry instance
 if (window.MasonryManager) {
-    const pageGrid = document.getElementById('page-{{.CurrentPage}}');
-    if (pageGrid) {
-        window.MasonryManager.initializeGrid(pageGrid);
-    }
+    window.MasonryManager.appendItems();
 }
 
 document.dispatchEvent(new CustomEvent('pageLoaded'));
