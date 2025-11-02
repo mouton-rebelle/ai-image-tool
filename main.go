@@ -69,26 +69,26 @@ type CivitaiVersionResponse struct {
 }
 
 type ImageMetadata struct {
-	ID              int       `json:"id"`
-	Filename        string    `json:"filename"`
-	Width           int       `json:"width"`
-	Height          int       `json:"height"`
-	ModelID         *int      `json:"model_id"`
-	Model           string    `json:"model"` // For display purposes
-	ModelHash       string    `json:"model_hash"`
-	Prompt          string    `json:"prompt"`
-	NegPrompt       string    `json:"neg_prompt"`
-	Steps           int       `json:"steps"`
-	CFGScale        float64   `json:"cfg_scale"`
-	Sampler         string    `json:"sampler"`
-	Scheduler       string    `json:"scheduler"`
-	Seed            int64     `json:"seed"`
-	ThumbnailPath   string    `json:"thumbnail_path"`
-	IsNSFW          bool      `json:"is_nsfw"`
-	ImageURL        string    `json:"image_url"`      // Full URL to the image
+	ID               int        `json:"id"`
+	Filename         string     `json:"filename"`
+	Width            int        `json:"width"`
+	Height           int        `json:"height"`
+	ModelID          *int       `json:"model_id"`
+	Model            string     `json:"model"` // For display purposes
+	ModelHash        string     `json:"model_hash"`
+	Prompt           string     `json:"prompt"`
+	NegPrompt        string     `json:"neg_prompt"`
+	Steps            int        `json:"steps"`
+	CFGScale         float64    `json:"cfg_scale"`
+	Sampler          string     `json:"sampler"`
+	Scheduler        string     `json:"scheduler"`
+	Seed             int64      `json:"seed"`
+	ThumbnailPath    string     `json:"thumbnail_path"`
+	IsNSFW           bool       `json:"is_nsfw"`
+	ImageURL         string     `json:"image_url"`         // Full URL to the image
 	DisplayTimestamp *time.Time `json:"display_timestamp"` // Computed chronological timestamp
-	TruncatedPrompt string    `json:"-"`
-	LoRAs           []LoraData `json:"loras"` // LoRA data for JSON and template display
+	TruncatedPrompt  string     `json:"-"`
+	LoRAs            []LoraData `json:"loras"` // LoRA data for JSON and template display
 }
 
 type ModelStat struct {
@@ -238,7 +238,7 @@ func main() {
 		for i := range filenames {
 			filenames[i] = strings.TrimSpace(filenames[i])
 		}
-		
+
 		updatedCount, err := app.fixImageMetadata(filenames)
 		if err != nil {
 			log.Fatal("Failed to fix metadata:", err)
@@ -284,8 +284,6 @@ func (app *App) initTemplates() error {
 	return err
 }
 
-
-
 func (app *App) setupRoutes(router *mux.Router) {
 	// Serve static files
 	router.PathPrefix("/images/").Handler(http.StripPrefix("/images/", http.FileServer(http.Dir("./images/"))))
@@ -299,8 +297,6 @@ func (app *App) setupRoutes(router *mux.Router) {
 	router.HandleFunc("/search", app.handleSearch).Methods("GET")
 	router.HandleFunc("/api/toggle-category", app.handleToggleCategory).Methods("POST")
 }
-
-
 
 func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// Check for URL parameters
@@ -480,8 +476,8 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 
 	// Select query with LEFT JOIN to loras table
 	selectQuery := `
-		SELECT i.id, i.filename, i.width, i.height, 
-		       CASE 
+		SELECT i.id, i.filename, i.width, i.height,
+		       CASE
 		           WHEN m.name IS NOT NULL AND m.version_name IS NOT NULL THEN m.name || ' - ' || m.version_name
 		           WHEN m.name IS NOT NULL THEN m.name
 		           ELSE 'Unknown Model'
@@ -491,7 +487,7 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 		FROM images i
 		LEFT JOIN models m ON i.model_id = m.id
 		LEFT JOIN (
-			SELECT DISTINCT image_id, name, weight 
+			SELECT DISTINCT image_id, name, weight
 			FROM loras
 		) l ON i.id = l.image_id ` + whereClause + `
 		ORDER BY ` + app.getOrderByClause() + `, l.name ASC
@@ -513,7 +509,7 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 	for rows.Next() {
 		var img ImageMetadata
 		var loraName, loraWeight sql.NullString
-		
+
 		err := rows.Scan(&img.ID, &img.Filename, &img.Width, &img.Height,
 			&img.Model, &img.Prompt, &img.NegPrompt, &img.Steps, &img.CFGScale,
 			&img.Sampler, &img.Scheduler, &img.Seed, &img.ThumbnailPath, &img.IsNSFW,
@@ -536,7 +532,7 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 		} else {
 			// New image, set URL and add to map
 			img.SetImageURL()
-			
+
 			// Add LoRA data if present
 			if loraName.Valid && loraWeight.Valid {
 				weight, _ := strconv.ParseFloat(loraWeight.String, 64)
@@ -545,7 +541,7 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 					Weight: weight,
 				})
 			}
-			
+
 			imageMap[img.ID] = &img
 			orderedIDs = append(orderedIDs, img.ID)
 		}
@@ -749,8 +745,8 @@ func (app *App) moveImageFiles(filename string, fromNSFW, toNSFW bool) error {
 
 	// For thumbnails, we don't need separate directories, but we need to ensure consistency
 	// The thumbnail path in database stays the same, just the main image moves
-	
-	log.Printf("Moved image %s from %s to %s category", filename, 
+
+	log.Printf("Moved image %s from %s to %s category", filename,
 		map[bool]string{false: "SFW", true: "NSFW"}[fromNSFW],
 		map[bool]string{false: "SFW", true: "NSFW"}[toNSFW])
 
@@ -790,19 +786,19 @@ func (app *App) cleanDuplicateImages() (int, error) {
 		if _, err := os.Stat(sfwPath); err == nil {
 			// File exists in both directories - this is a duplicate
 			duplicatesFound++
-			
+
 			// Move the NSFW version to temp folder
 			tempPath := filepath.Join(tempDir, filename)
-			
+
 			fmt.Printf("Moving duplicate: %s -> %s\n", nsfwPath, tempPath)
-			
+
 			if err := os.Rename(nsfwPath, tempPath); err != nil {
 				fmt.Printf("Warning: Failed to move %s: %v\n", filename, err)
 				continue
 			}
-			
+
 			movedFiles = append(movedFiles, filename)
-			
+
 			// Update database to set is_nsfw = false for this image
 			// Extract image ID from filename (assuming format: ID.extension)
 			filenameWithoutExt := strings.TrimSuffix(filename, filepath.Ext(filename))
@@ -853,19 +849,19 @@ func (app *App) getOrderByClause() string {
 // fixCivitaiTimestamps updates display_timestamp for all Civitai images using real creation dates
 func (app *App) fixCivitaiTimestamps() (int, error) {
 	fmt.Println("Starting Civitai timestamp fix...")
-	
+
 	// Load timestamp mapping
 	mapping, err := LoadTimestampMapping()
 	if err != nil {
 		return 0, fmt.Errorf("failed to load timestamp mapping: %v", err)
 	}
-	
+
 	if len(mapping) == 0 {
 		return 0, fmt.Errorf("no timestamp mapping found. Please run import first to generate civitai_timestamps.json")
 	}
-	
+
 	fmt.Printf("Found %d timestamp mappings to process\n", len(mapping))
-	
+
 	// Get all images with numeric filenames (Civitai images)
 	query := `SELECT id, filename FROM images WHERE filename GLOB '[0-9]*.*'`
 	rows, err := app.db.Query(query)
@@ -873,19 +869,19 @@ func (app *App) fixCivitaiTimestamps() (int, error) {
 		return 0, fmt.Errorf("failed to query images: %v", err)
 	}
 	defer rows.Close()
-	
+
 	updatedCount := 0
-	
+
 	// Process each Civitai image
 	for rows.Next() {
 		var imageID int
 		var filename string
-		
+
 		if err := rows.Scan(&imageID, &filename); err != nil {
 			log.Printf("Error scanning row: %v", err)
 			continue
 		}
-		
+
 		// Check if we have a timestamp for this image
 		if createdAtStr, exists := mapping[filename]; exists {
 			// Parse the timestamp
@@ -905,11 +901,11 @@ func (app *App) fixCivitaiTimestamps() (int, error) {
 			}
 		}
 	}
-	
+
 	if err := rows.Err(); err != nil {
 		return updatedCount, fmt.Errorf("error processing rows: %v", err)
 	}
-	
+
 	fmt.Printf("Successfully updated timestamps for %d Civitai images\n", updatedCount)
 	return updatedCount, nil
 }
@@ -917,12 +913,12 @@ func (app *App) fixCivitaiTimestamps() (int, error) {
 // fixImageMetadata re-processes metadata for specific images
 func (app *App) fixImageMetadata(filenames []string) (int, error) {
 	fmt.Printf("Starting metadata fix for %d images...\n", len(filenames))
-	
+
 	updatedCount := 0
-	
+
 	for _, filename := range filenames {
 		fmt.Printf("Processing %s...\n", filename)
-		
+
 		// Find the image in the database to get its ID and path info
 		var imageID int
 		var isNSFW bool
@@ -931,7 +927,7 @@ func (app *App) fixImageMetadata(filenames []string) (int, error) {
 			fmt.Printf("Error: Image %s not found in database: %v\n", filename, err)
 			continue
 		}
-		
+
 		// Determine the image path
 		var imagePath string
 		if isNSFW {
@@ -939,21 +935,21 @@ func (app *App) fixImageMetadata(filenames []string) (int, error) {
 		} else {
 			imagePath = "images/" + filename
 		}
-		
+
 		// Re-extract metadata
 		metadata, err := app.extractImageMetadata(imagePath, isNSFW)
 		if err != nil {
 			fmt.Printf("Error: Failed to extract metadata for %s: %v\n", filename, err)
 			continue
 		}
-		
+
 		// Update the database with new metadata
-		updateQuery := `UPDATE images SET 
-			prompt = ?, neg_prompt = ?, steps = ?, cfg_scale = ?, 
+		updateQuery := `UPDATE images SET
+			prompt = ?, neg_prompt = ?, steps = ?, cfg_scale = ?,
 			sampler = ?, scheduler = ?, seed = ?, model_hash = ?
 			WHERE id = ?`
-			
-		_, err = app.db.Exec(updateQuery, 
+
+		_, err = app.db.Exec(updateQuery,
 			metadata.Prompt, metadata.NegPrompt, metadata.Steps, metadata.CFGScale,
 			metadata.Sampler, metadata.Scheduler, metadata.Seed, metadata.ModelHash,
 			imageID)
@@ -961,13 +957,13 @@ func (app *App) fixImageMetadata(filenames []string) (int, error) {
 			fmt.Printf("Error: Failed to update database for %s: %v\n", filename, err)
 			continue
 		}
-		
+
 		// Clear existing LoRA data for this image
 		_, err = app.db.Exec("DELETE FROM loras WHERE image_id = ?", imageID)
 		if err != nil {
 			fmt.Printf("Warning: Failed to clear LoRA data for %s: %v\n", filename, err)
 		}
-		
+
 		// Insert new LoRA data
 		if len(metadata.LoRAs) > 0 {
 			err = app.insertLoraData(imageID, metadata.LoRAs)
@@ -975,10 +971,10 @@ func (app *App) fixImageMetadata(filenames []string) (int, error) {
 				fmt.Printf("Warning: Failed to insert LoRA data for %s: %v\n", filename, err)
 			}
 		}
-		
+
 		updatedCount++
 		fmt.Printf("Successfully updated metadata for %s\n", filename)
 	}
-	
+
 	return updatedCount, nil
 }

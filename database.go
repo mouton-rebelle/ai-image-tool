@@ -4,11 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -36,7 +33,7 @@ func (app *App) initDB() error {
 		base_model TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
-	
+
 	CREATE INDEX IF NOT EXISTS idx_model_hash ON models(hash);
 	`
 
@@ -61,7 +58,7 @@ func (app *App) initDB() error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (model_id) REFERENCES models(id)
 	);
-	
+
 	CREATE INDEX IF NOT EXISTS idx_model_id ON images(model_id);
 	CREATE INDEX IF NOT EXISTS idx_model_hash ON images(model_hash);
 	CREATE INDEX IF NOT EXISTS idx_prompt ON images(prompt);
@@ -79,7 +76,7 @@ func (app *App) initDB() error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
 	);
-	
+
 	CREATE INDEX IF NOT EXISTS idx_lora_image_id ON loras(image_id);
 	CREATE INDEX IF NOT EXISTS idx_lora_name ON loras(name);
 	`
@@ -180,13 +177,13 @@ func (app *App) clearImagesTables() error {
 
 func (app *App) migrateDisplayTimestamps() error {
 	log.Printf("Starting display timestamp migration...")
-	
+
 	// Double-check that the column exists before querying it
 	if !app.columnExists("images", "display_timestamp") {
 		log.Printf("display_timestamp column does not exist, skipping migration")
 		return nil
 	}
-	
+
 	// Find all images that don't have display_timestamp set
 	query := "SELECT id, filename FROM images WHERE display_timestamp IS NULL"
 	rows, err := app.db.Query(query)
@@ -234,7 +231,7 @@ func (app *App) migrateDisplayTimestamps() error {
 
 		// Calculate display timestamp (inline implementation)
 		var displayTimestamp *time.Time
-		
+
 		// Method 1: For Civitai images (numeric filenames), use ID-based timestamp
 		idStr := strings.Split(imageData.Filename, ".")[0]
 		if civitaiID, err := strconv.Atoi(idStr); err == nil {
@@ -409,14 +406,13 @@ func (app *App) insertLoraData(imageID int, loras []LoraData) error {
 	return nil
 }
 
-
 func (app *App) getModelStats() ([]ModelStat, error) {
 	query := `
-		SELECT 
+		SELECT
 			m.id,
-			CASE 
-				WHEN m.name IS NOT NULL AND m.version_name IS NOT NULL 
-				THEN m.name 
+			CASE
+				WHEN m.name IS NOT NULL AND m.version_name IS NOT NULL
+				THEN m.name
 				ELSE COALESCE(m.name, 'Unknown Model')
 			END as model_name,
 			COALESCE(m.version_name, '') as version_name,
