@@ -139,6 +139,34 @@ func (app *App) extractImageMetadata(imagePath string, isNSFW bool) (*ImageMetad
 	}
 	defer file.Close()
 
+	// Detect actual file type by reading magic bytes to skip video files
+	fileMagicBytes := make([]byte, 12)
+	file.Read(fileMagicBytes)
+	file.Seek(0, 0) // Reset file pointer
+
+	// Check for video files (MP4, WebM, AVI, MOV)
+	// MP4: starts with "ftyp" at offset 4, or ftypiso at offset 4
+	// WebM: starts with 0x1A 0x45 0xDF 0xA3
+	// AVI: starts with "RIFF" and contains "AVI "
+	if len(fileMagicBytes) >= 8 {
+		// MP4 detection
+		if string(fileMagicBytes[4:8]) == "ftyp" {
+			return nil, fmt.Errorf("skipping video file (MP4): %s", filename)
+		}
+		// WebM detection
+		if fileMagicBytes[0] == 0x1A && fileMagicBytes[1] == 0x45 && fileMagicBytes[2] == 0xDF && fileMagicBytes[3] == 0xA3 {
+			return nil, fmt.Errorf("skipping video file (WebM): %s", filename)
+		}
+		// AVI detection
+		if string(fileMagicBytes[0:4]) == "RIFF" && len(fileMagicBytes) >= 12 && string(fileMagicBytes[8:12]) == "AVI " {
+			return nil, fmt.Errorf("skipping video file (AVI): %s", filename)
+		}
+		// MOV/QuickTime detection
+		if string(fileMagicBytes[4:8]) == "moov" || string(fileMagicBytes[4:8]) == "mdat" {
+			return nil, fmt.Errorf("skipping video file (MOV): %s", filename)
+		}
+	}
+
 	// Get image dimensions
 	img, _, err := image.DecodeConfig(file)
 	if err != nil {
@@ -156,48 +184,60 @@ func (app *App) extractImageMetadata(imagePath string, isNSFW bool) (*ImageMetad
 	// Calculate display timestamp for chronological ordering
 	metadata.DisplayTimestamp = calculateDisplayTimestamp(imagePath, id, filename)
 
-	// Try to extract EXIF data (this might contain generation parameters)
+	// Detect actual file type by magic bytes instead of relying on extension
 	file.Seek(0, 0) // Reset file pointer
-	exifData, err := exif.Decode(file)
-	if err == nil {
-		// Try to extract common AI generation parameters from various EXIF fields
-		if userComment, err := exifData.Get(exif.UserComment); err == nil {
-			if comment := string(userComment.Val); comment != "" {
-				app.parseGenerationParams(comment, metadata)
-			}
-		}
+	signature := make([]byte, 8)
+	file.Read(signature)
+	file.Seek(0, 0) // Reset again for subsequent reads
 
-		if imageDescription, err := exifData.Get(exif.ImageDescription); err == nil {
-			if desc := string(imageDescription.Val); desc != "" {
-				app.parseGenerationParams(desc, metadata)
-			}
-		}
+	pngSignature := []byte{137, 80, 78, 71, 13, 10, 26, 10}
+	jpegSignature := []byte{0xFF, 0xD8, 0xFF}
+	isPNG := len(signature) >= 8 && string(signature[:8]) == string(pngSignature)
+	isJPEG := len(signature) >= 3 && string(signature[:3]) == string(jpegSignature)
 
-		// Try other common EXIF fields that might contain AI metadata
-		if software, err := exifData.Get(exif.Software); err == nil {
-			if sw := string(software.Val); sw != "" {
-				app.parseGenerationParams(sw, metadata)
-			}
-		}
-
-		// Try Artist field
-		if artist, err := exifData.Get(exif.Artist); err == nil {
-			if art := string(artist.Val); art != "" {
-				app.parseGenerationParams(art, metadata)
-			}
-		}
-
-		// Try Copyright field
-		if copyright, err := exifData.Get(exif.Copyright); err == nil {
-			if cp := string(copyright.Val); cp != "" {
-				app.parseGenerationParams(cp, metadata)
-			}
-		}
+	// Try PNG metadata first if it's a PNG file (regardless of extension)
+	if isPNG {
+		app.extractPNGMetadata(imagePath, metadata)
 	}
 
-	// If EXIF didn't work and this is a PNG file, try PNG text chunks
-	if strings.ToLower(filepath.Ext(filename)) == ".png" && metadata.Seed == 0 {
-		app.extractPNGMetadata(imagePath, metadata)
+	// If still no metadata found, try EXIF (works for JPEG and some PNGs)
+	if metadata.Seed == 0 && isJPEG {
+		exifData, err := exif.Decode(file)
+		if err == nil {
+			// Try to extract common AI generation parameters from various EXIF fields
+			if userComment, err := exifData.Get(exif.UserComment); err == nil {
+				if comment := string(userComment.Val); comment != "" {
+					app.parseGenerationParams(comment, metadata)
+				}
+			}
+
+			if imageDescription, err := exifData.Get(exif.ImageDescription); err == nil {
+				if desc := string(imageDescription.Val); desc != "" {
+					app.parseGenerationParams(desc, metadata)
+				}
+			}
+
+			// Try other common EXIF fields that might contain AI metadata
+			if software, err := exifData.Get(exif.Software); err == nil {
+				if sw := string(software.Val); sw != "" {
+					app.parseGenerationParams(sw, metadata)
+				}
+			}
+
+			// Try Artist field
+			if artist, err := exifData.Get(exif.Artist); err == nil {
+				if art := string(artist.Val); art != "" {
+					app.parseGenerationParams(art, metadata)
+				}
+			}
+
+			// Try Copyright field
+			if copyright, err := exifData.Get(exif.Copyright); err == nil {
+				if cp := string(copyright.Val); cp != "" {
+					app.parseGenerationParams(cp, metadata)
+				}
+			}
+		}
 	}
 
 	// Process model information
@@ -322,18 +362,18 @@ func calculateDisplayTimestamp(imagePath string, imageID int, filename string) *
 // loadCivitaiTimestamps loads timestamp mapping from civitai_timestamps.json
 func loadCivitaiTimestamps() map[string]string {
 	mapping := make(map[string]string)
-	
+
 	file, err := os.Open("civitai_timestamps.json")
 	if err != nil {
 		// File doesn't exist or can't be opened
 		return mapping
 	}
 	defer file.Close()
-	
+
 	if err := json.NewDecoder(file).Decode(&mapping); err != nil {
 		log.Printf("Warning: Failed to decode civitai_timestamps.json: %v", err)
 		return make(map[string]string)
 	}
-	
+
 	return mapping
 }

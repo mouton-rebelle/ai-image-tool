@@ -29,14 +29,14 @@ type CivitaiImage struct {
 	NSFW      bool   `json:"nsfw"`
 	CreatedAt string `json:"createdAt"`
 	Meta      struct {
-		Prompt    string `json:"prompt"`
-		NegPrompt string `json:"negativePrompt"`
-		Steps     int    `json:"steps"`
+		Prompt    string  `json:"prompt"`
+		NegPrompt string  `json:"negativePrompt"`
+		Steps     int     `json:"steps"`
 		CFGScale  float64 `json:"cfgScale"`
-		Sampler   string `json:"sampler"`
-		Scheduler string `json:"scheduler"`
-		Seed      int64  `json:"seed"`
-		Model     string `json:"model"`
+		Sampler   string  `json:"sampler"`
+		Scheduler string  `json:"scheduler"`
+		Seed      int64   `json:"seed"`
+		Model     string  `json:"model"`
 	} `json:"meta"`
 	Stats struct {
 		LikeCount    int `json:"likeCount"`
@@ -47,8 +47,8 @@ type CivitaiImage struct {
 
 // ImportConfig holds the configuration for Civitai import
 type ImportConfig struct {
-	Token              string
-	Username           string
+	Token               string
+	Username            string
 	AutoImportOnStartup bool
 }
 
@@ -58,11 +58,11 @@ func getImportConfig() *ImportConfig {
 	if config := loadConfigFromFile(); config != nil {
 		return config
 	}
-	
+
 	// Fallback to environment variables
 	config := &ImportConfig{
-		Token:              os.Getenv("CIVITAI_TOKEN"),
-		Username:           getEnvOrDefault("CIVITAI_USERNAME", "moutonrebelle"),
+		Token:               os.Getenv("CIVITAI_TOKEN"),
+		Username:            getEnvOrDefault("CIVITAI_USERNAME", "moutonrebelle"),
 		AutoImportOnStartup: getEnvOrDefault("AUTO_IMPORT_ON_STARTUP", "false") == "true",
 	}
 	return config
@@ -127,12 +127,12 @@ func loadConfigFromFile() *ImportConfig {
 // importFromCivitai downloads images and prompts from Civitai API
 func (app *App) importFromCivitai() error {
 	config := getImportConfig()
-	
+
 	// Validate configuration
 	if config.Username == "" {
 		return fmt.Errorf("CIVITAI_USERNAME is required for import")
 	}
-	
+
 	fmt.Printf("Starting Civitai import with config:\n")
 	fmt.Printf("  Username: %s\n", config.Username)
 	fmt.Printf("  Sort: Newest\n")
@@ -173,7 +173,7 @@ func (app *App) importFromCivitai() error {
 
 	for {
 		fmt.Printf("\n=== Fetching page %d ===\n", page)
-		
+
 		images, nextPageURL, err := app.fetchCivitaiImages(config, nextPage)
 		if err != nil {
 			return fmt.Errorf("failed to fetch images: %v", err)
@@ -308,7 +308,7 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 	// Check if file already exists in either SFW or NSFW directory
 	sfwPath := filepath.Join("images", filename)
 	nsfwPath := filepath.Join("images_nsfw", filename)
-	
+
 	if _, err := os.Stat(sfwPath); err == nil {
 		return false, nil // File already exists in SFW directory
 	}
@@ -343,24 +343,23 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 	return true, nil
 }
 
-
 // checkForNewCivitaiImages checks for new images on startup and stops as soon as it finds an already-imported image
 func (app *App) checkForNewCivitaiImages() error {
 	config := getImportConfig()
-	
+
 	// Check if auto-import is enabled
 	if !config.AutoImportOnStartup {
 		return nil
 	}
-	
+
 	// Validate configuration
 	if config.Username == "" {
 		fmt.Println("Auto-import skipped: CIVITAI_USERNAME not configured")
 		return nil
 	}
-	
+
 	fmt.Printf("Checking for new Civitai images for user: %s\n", config.Username)
-	
+
 	// Create directories if they don't exist
 	if err := os.MkdirAll("images", 0755); err != nil {
 		return fmt.Errorf("failed to create images directory: %v", err)
@@ -368,80 +367,88 @@ func (app *App) checkForNewCivitaiImages() error {
 	if err := os.MkdirAll("images_nsfw", 0755); err != nil {
 		return fmt.Errorf("failed to create images_nsfw directory: %v", err)
 	}
-	
+
 	// Load excluded words
 	excludedWords := loadExcludedWords()
 	_ = excludedWords // Will be used by database insertion
-	
+
 	// Load timestamp mapping
 	timestampMapping, err := LoadTimestampMapping()
 	if err != nil {
 		return fmt.Errorf("failed to load timestamp mapping: %v", err)
 	}
-	
+
 	// Fetch first page of images
 	images, _, err := app.fetchCivitaiImages(config, "")
 	if err != nil {
 		return fmt.Errorf("failed to fetch images: %v", err)
 	}
-	
+
 	if len(images) == 0 {
 		fmt.Println("No new images found.")
 		return nil
 	}
-	
+
 	newImagesCount := 0
-	
-	// Process each image until we find one that already exists
+	foundExisting := false
+
+	// Process each image - capture timestamps for all, download only new ones
 	for _, img := range images {
 		// Check if image already exists
 		ext := filepath.Ext(img.URL)
 		if ext == "" {
 			ext = ".jpg"
 		}
-		
+
 		filename := fmt.Sprintf("%d%s", img.ID, ext)
-		
-		// If file exists in either directory, we've reached already-imported content - stop here
+
+		// Always update timestamp mapping for this image (even if already downloaded)
+		updateTimestampMapping(timestampMapping, img)
+
+		// If we already found an existing image, skip downloading but continue capturing timestamps
+		if foundExisting {
+			continue
+		}
+
+		// If file exists in either directory, we've reached already-imported content
 		sfwPath := filepath.Join("images", filename)
 		nsfwPath := filepath.Join("images_nsfw", filename)
-		
+
 		if _, err := os.Stat(sfwPath); err == nil {
-			fmt.Printf("Reached already-imported image %d (in SFW), stopping auto-import\n", img.ID)
-			break
+			fmt.Printf("Reached already-imported image %d (in SFW), capturing timestamps for remaining images on this page\n", img.ID)
+			foundExisting = true
+			continue
 		}
 		if _, err := os.Stat(nsfwPath); err == nil {
-			fmt.Printf("Reached already-imported image %d (in NSFW), stopping auto-import\n", img.ID)
-			break
+			fmt.Printf("Reached already-imported image %d (in NSFW), capturing timestamps for remaining images on this page\n", img.ID)
+			foundExisting = true
+			continue
 		}
-		
+
 		// Download new image
 		downloaded, err := app.downloadImage(img)
 		if err != nil {
 			fmt.Printf("Error downloading image %d: %v\n", img.ID, err)
 			continue
 		}
-		
-		// Update timestamp mapping
-		updateTimestampMapping(timestampMapping, img)
-		
+
 		if downloaded {
 			newImagesCount++
 			fmt.Printf("Downloaded new image %d\n", img.ID)
 		}
 	}
-	
+
 	// Save timestamp mapping
 	if err := saveTimestampMapping(timestampMapping); err != nil {
 		fmt.Printf("Warning: Failed to save timestamp mapping: %v\n", err)
 	}
-	
+
 	if newImagesCount > 0 {
 		fmt.Printf("Auto-import completed: %d new images downloaded\n", newImagesCount)
 	} else {
 		fmt.Println("No new images found during auto-import")
 	}
-	
+
 	return nil
 }
 
@@ -451,7 +458,7 @@ type TimestampMapping map[string]string // filename -> createdAt
 // LoadTimestampMapping loads the timestamp mapping from civitai_timestamps.json
 func LoadTimestampMapping() (TimestampMapping, error) {
 	mapping := make(TimestampMapping)
-	
+
 	file, err := os.Open("civitai_timestamps.json")
 	if err != nil {
 		// File doesn't exist yet, return empty mapping
@@ -461,11 +468,11 @@ func LoadTimestampMapping() (TimestampMapping, error) {
 		return nil, fmt.Errorf("failed to open timestamp mapping: %v", err)
 	}
 	defer file.Close()
-	
+
 	if err := json.NewDecoder(file).Decode(&mapping); err != nil {
 		return nil, fmt.Errorf("failed to decode timestamp mapping: %v", err)
 	}
-	
+
 	return mapping, nil
 }
 
@@ -476,13 +483,13 @@ func saveTimestampMapping(mapping TimestampMapping) error {
 		return fmt.Errorf("failed to create timestamp mapping file: %v", err)
 	}
 	defer file.Close()
-	
+
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ") // Pretty print
 	if err := encoder.Encode(mapping); err != nil {
 		return fmt.Errorf("failed to encode timestamp mapping: %v", err)
 	}
-	
+
 	return nil
 }
 
@@ -493,7 +500,7 @@ func updateTimestampMapping(mapping TimestampMapping, img CivitaiImage) {
 	if ext == "" {
 		ext = ".jpg"
 	}
-	
+
 	filename := fmt.Sprintf("%d%s", img.ID, ext)
 	mapping[filename] = img.CreatedAt
 }
