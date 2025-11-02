@@ -762,6 +762,7 @@
         const MIN_COLUMN_WIDTH = 250;
         let globalResizeTimeout;
         let resizeObserver;
+        let resizeListenerAttached = false;
 
         // Calculate optimal column width based on container width
         function calculateColumnWidth(containerWidth) {
@@ -781,7 +782,14 @@
 
         // Initialize masonry for the unified grid (called once on first page load)
         function initializeGrid(grid) {
-            if (!grid || masonryInstance) return;
+            if (!grid) return;
+
+            if (masonryInstance) {
+                if (mainGrid === grid) {
+                    return;
+                }
+                destroyInstance();
+            }
 
             mainGrid = grid;
 
@@ -813,9 +821,7 @@
                 });
 
                 // Set up resize observer
-                if (!resizeObserver) {
-                    setupResizeObserver();
-                }
+                setupResizeObserver();
 
                 console.log('Masonry instance initialized');
 
@@ -939,19 +945,39 @@
         // Set up ResizeObserver for better performance
         function setupResizeObserver() {
             if (window.ResizeObserver) {
-                resizeObserver = new ResizeObserver(handleResize);
-                resizeObserver.observe(document.body);
-            } else {
-                // Fallback to window resize
+                if (!resizeObserver) {
+                    resizeObserver = new ResizeObserver(handleResize);
+                    resizeObserver.observe(document.body);
+                }
+            } else if (!resizeListenerAttached) {
                 window.addEventListener('resize', handleResize);
+                resizeListenerAttached = true;
             }
+        }
+
+        function destroyInstance() {
+            if (resizeObserver) {
+                resizeObserver.disconnect();
+                resizeObserver = null;
+            } else if (resizeListenerAttached) {
+                window.removeEventListener('resize', handleResize);
+                resizeListenerAttached = false;
+            }
+
+            if (masonryInstance) {
+                masonryInstance.destroy();
+                masonryInstance = null;
+            }
+
+            mainGrid = null;
         }
 
         // Public API
         return {
             initializeGrid: initializeGrid,
             appendItems: appendItems,
-            handleResize: handleResize
+            handleResize: handleResize,
+            destroyInstance: destroyInstance
         };
     })();
     </script>
