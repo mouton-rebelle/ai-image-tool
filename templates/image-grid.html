@@ -150,25 +150,10 @@ document.addEventListener('htmx:targetError', function(event) {
     setTimeout(window.updateLoadMore, 100);
 });
 
-// Initialize load more (don't increment page on first setup)
-(function() {
-    const loadMore = document.getElementById('load-more');
-    if (loadMore && window.hasMore) {
-        const nextPage = window.currentPage + 1;
-        const searchParam = window.currentSearch ? `q=${encodeURIComponent(window.currentSearch)}&` : '';
-        const nsfwParam = window.currentNSFWFilter && window.currentNSFWFilter !== 'all' ? `nsfw=${window.currentNSFWFilter}&` : '';
-        const url = `/search?${searchParam}${nsfwParam}page=${nextPage}`;
-
-        loadMore.setAttribute('hx-get', url);
-        loadMore.setAttribute('hx-trigger', 'intersect once');
-        loadMore.style.display = 'block';
-        htmx.process(loadMore);
-
-        console.log('Initial load more setup for page:', nextPage, 'URL:', url, 'Search:', window.currentSearch, 'NSFW:', window.currentNSFWFilter);
-    } else if (loadMore) {
-        loadMore.style.display = 'none';
-    }
-})();
+// Initialize load more - use the updateLoadMore function to avoid duplication
+if (window.updateLoadMore) {
+    window.updateLoadMore();
+}
 </script>
 {{else}}
 {{range .Images}}
