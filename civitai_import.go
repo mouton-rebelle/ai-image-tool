@@ -53,19 +53,31 @@ type ImportConfig struct {
 	AutoImportOnStartup bool
 }
 
-// getImportConfig reads configuration from config file or environment variables
+// getImportConfig reads configuration from the config file, then lets injected
+// environment variables override it. This keeps non-secret local settings in
+// civitai.config while allowing tokens to come from a secret manager.
 func getImportConfig() *ImportConfig {
-	// Try to load from config file first
-	if config := loadConfigFromFile(); config != nil {
-		return config
+	return resolveImportConfig(loadConfigFromFile(), os.LookupEnv)
+}
+
+func resolveImportConfig(fileConfig *ImportConfig, lookupEnv func(string) (string, bool)) *ImportConfig {
+	config := &ImportConfig{
+		Username: "moutonrebelle",
+	}
+	if fileConfig != nil {
+		*config = *fileConfig
 	}
 
-	// Fallback to environment variables
-	config := &ImportConfig{
-		Token:               os.Getenv("CIVITAI_TOKEN"),
-		Username:            getEnvOrDefault("CIVITAI_USERNAME", "moutonrebelle"),
-		AutoImportOnStartup: getEnvOrDefault("AUTO_IMPORT_ON_STARTUP", "false") == "true",
+	if value, ok := lookupEnv("CIVITAI_TOKEN"); ok {
+		config.Token = value
 	}
+	if value, ok := lookupEnv("CIVITAI_USERNAME"); ok && value != "" {
+		config.Username = value
+	}
+	if value, ok := lookupEnv("AUTO_IMPORT_ON_STARTUP"); ok {
+		config.AutoImportOnStartup = strings.EqualFold(value, "true")
+	}
+
 	return config
 }
 
