@@ -127,8 +127,9 @@ type PageNumber struct {
 }
 
 type App struct {
-	db        *sql.DB
-	templates *template.Template
+	db              *sql.DB
+	templates       *template.Template
+	promptGenerator PromptGenerator
 }
 
 func main() {
@@ -180,7 +181,13 @@ func main() {
 		os.Exit(0)
 	}
 
-	app := &App{}
+	promptGenerator, promptGeneratorDescription := newPromptGeneratorFromEnv()
+	app := &App{promptGenerator: promptGenerator}
+	if promptGenerator == nil {
+		log.Println("Prompt generation disabled: configure PROMPT_LLM_API_KEY or XAI_API_KEY to enable it")
+	} else {
+		log.Printf("Prompt generation enabled with %s", promptGeneratorDescription)
+	}
 
 	// Initialize templates
 	if err := app.initTemplates(); err != nil {
@@ -296,6 +303,7 @@ func (app *App) setupRoutes(router *mux.Router) {
 	router.HandleFunc("/api/images", app.handleAPIImages).Methods("GET")
 	router.HandleFunc("/search", app.handleSearch).Methods("GET")
 	router.HandleFunc("/api/toggle-category", app.handleToggleCategory).Methods("POST")
+	router.HandleFunc("/api/generate-prompt", app.handleGeneratePrompt).Methods("POST")
 }
 
 func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
