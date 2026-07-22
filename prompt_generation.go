@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,9 +26,16 @@ const (
 )
 
 // PromptGenerator is the provider-neutral boundary used by the application.
-// Providers only need to turn a system instruction and a source prompt into text.
+// Providers turn a system instruction, source prompt, and optional visual
+// reference into text.
 type PromptGenerator interface {
-	Generate(ctx context.Context, systemPrompt, sourcePrompt string) (string, error)
+	Generate(ctx context.Context, input PromptGenerationInput) (string, error)
+}
+
+type PromptGenerationInput struct {
+	SystemPrompt string
+	SourcePrompt string
+	Image        *PromptImage
 }
 
 type PromptProfile struct {
@@ -85,22 +93,57 @@ type OpenAICompatiblePromptGenerator struct {
 }
 
 type chatCompletionRequest struct {
-	Model               string                  `json:"model"`
-	Messages            []chatCompletionMessage `json:"messages"`
-	ReasoningEffort     string                  `json:"reasoning_effort,omitempty"`
-	MaxCompletionTokens int                     `json:"max_completion_tokens,omitempty"`
+	Model               string                         `json:"model"`
+	Messages            []chatCompletionRequestMessage `json:"messages"`
+	ReasoningEffort     string                         `json:"reasoning_effort,omitempty"`
+	MaxCompletionTokens int                            `json:"max_completion_tokens,omitempty"`
 }
 
-type chatCompletionMessage struct {
+type chatCompletionRequestMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"`
+}
+
+type chatCompletionContentPart struct {
+	Type     string                  `json:"type"`
+	Text     string                  `json:"text,omitempty"`
+	ImageURL *chatCompletionImageURL `json:"image_url,omitempty"`
+}
+
+type chatCompletionImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type chatCompletionResponseMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
 type chatCompletionResponse struct {
 	Choices []struct {
-		Message chatCompletionMessage `json:"message"`
+		Message chatCompletionResponseMessage `json:"message"`
 	} `json:"choices"`
-	Error json.RawMessage `json:"error,omitempty"`
+	Error json.RawMessage      `json:"error,omitempty"`
+	Usage *chatCompletionUsage `json:"usage,omitempty"`
+}
+
+type chatCompletionUsage struct {
+	PromptTokens            int                               `json:"prompt_tokens"`
+	CompletionTokens        int                               `json:"completion_tokens"`
+	TotalTokens             int                               `json:"total_tokens"`
+	PromptTokensDetails     chatCompletionPromptTokensDetails `json:"prompt_tokens_details"`
+	CompletionTokensDetails chatCompletionOutputTokensDetails `json:"completion_tokens_details"`
+}
+
+type chatCompletionPromptTokensDetails struct {
+	TextTokens   int `json:"text_tokens"`
+	ImageTokens  int `json:"image_tokens"`
+	CachedTokens int `json:"cached_tokens"`
+}
+
+type chatCompletionOutputTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
 func newPromptGeneratorFromEnv() (PromptGenerator, string) {
@@ -142,14 +185,11 @@ func firstNonEmptyEnv(keys ...string) string {
 	return ""
 }
 
-func (g *OpenAICompatiblePromptGenerator) Generate(ctx context.Context, systemPrompt, sourcePrompt string) (string, error) {
+func (g *OpenAICompatiblePromptGenerator) Generate(ctx context.Context, input PromptGenerationInput) (string, error) {
 	requestBody := chatCompletionRequest{
-		Model:           g.model,
-		ReasoningEffort: g.reasoningEffort,
-		Messages: []chatCompletionMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: sourcePrompt},
-		},
+		Model:               g.model,
+		ReasoningEffort:     g.reasoningEffort,
+		Messages:            promptChatMessages(input),
 		MaxCompletionTokens: 1200,
 	}
 
@@ -197,8 +237,55 @@ func (g *OpenAICompatiblePromptGenerator) Generate(ctx context.Context, systemPr
 	if generatedPrompt == "" {
 		return "", errors.New("chat completion response contains an empty prompt")
 	}
+	if completion.Usage != nil {
+		log.Printf(
+			"Prompt generation tokens: prompt=%d text=%d image=%d cached=%d completion=%d reasoning=%d total=%d",
+			completion.Usage.PromptTokens,
+			completion.Usage.PromptTokensDetails.TextTokens,
+			completion.Usage.PromptTokensDetails.ImageTokens,
+			completion.Usage.PromptTokensDetails.CachedTokens,
+			completion.Usage.CompletionTokens,
+			completion.Usage.CompletionTokensDetails.ReasoningTokens,
+			completion.Usage.TotalTokens,
+		)
+	}
 
 	return generatedPrompt, nil
+}
+
+func promptChatMessages(input PromptGenerationInput) []chatCompletionRequestMessage {
+	messages := []chatCompletionRequestMessage{
+		{Role: "system", Content: input.SystemPrompt},
+	}
+	if input.Image == nil {
+		return append(messages, chatCompletionRequestMessage{Role: "user", Content: input.SourcePrompt})
+	}
+
+	mediaType := strings.TrimSpace(input.Image.MediaType)
+	if mediaType == "" {
+		mediaType = "image/jpeg"
+	}
+	detail := strings.TrimSpace(input.Image.Detail)
+	if detail == "" {
+		detail = promptImageDetail
+	}
+	dataURL := "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(input.Image.Data)
+	content := []chatCompletionContentPart{
+		{
+			Type: "image_url",
+			ImageURL: &chatCompletionImageURL{
+				URL:    dataURL,
+				Detail: detail,
+			},
+		},
+		{
+			Type: "text",
+			Text: "Use the attached image as the visual reference and the following source prompt as semantic guidance. " +
+				"Rewrite the prompt according to the system instructions.\n\n" + input.SourcePrompt,
+		},
+	}
+
+	return append(messages, chatCompletionRequestMessage{Role: "user", Content: content})
 }
 
 func chatCompletionErrorMessage(raw json.RawMessage) string {
@@ -265,8 +352,9 @@ func (app *App) handleGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var sourcePrompt string
-	if err := app.db.QueryRowContext(r.Context(), "SELECT prompt FROM images WHERE id = ?", request.ImageID).Scan(&sourcePrompt); err != nil {
+	var sourcePrompt, filename string
+	var isNSFW bool
+	if err := app.db.QueryRowContext(r.Context(), "SELECT prompt, filename, is_nsfw FROM images WHERE id = ?", request.ImageID).Scan(&sourcePrompt, &filename, &isNSFW); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeGeneratePromptJSON(w, http.StatusNotFound, generatePromptResponse{Error: "Image not found"})
 			return
@@ -279,8 +367,24 @@ func (app *App) handleGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 		writeGeneratePromptJSON(w, http.StatusUnprocessableEntity, generatePromptResponse{Error: "This image has no prompt to remix"})
 		return
 	}
+	imagePath, err := app.promptImagePath(filename, isNSFW)
+	if err != nil {
+		log.Printf("Failed to resolve image %d for prompt generation: %v", request.ImageID, err)
+		writeGeneratePromptJSON(w, http.StatusInternalServerError, generatePromptResponse{Error: "The source image could not be loaded"})
+		return
+	}
+	promptImage, err := preparePromptImage(imagePath)
+	if err != nil {
+		log.Printf("Failed to prepare image %d for prompt generation: %v", request.ImageID, err)
+		writeGeneratePromptJSON(w, http.StatusInternalServerError, generatePromptResponse{Error: "The source image could not be loaded"})
+		return
+	}
 
-	generatedPrompt, err := app.promptGenerator.Generate(r.Context(), profile.SystemPrompt, sourcePrompt)
+	generatedPrompt, err := app.promptGenerator.Generate(r.Context(), PromptGenerationInput{
+		SystemPrompt: profile.SystemPrompt,
+		SourcePrompt: sourcePrompt,
+		Image:        promptImage,
+	})
 	if err != nil {
 		log.Printf("Prompt generation failed for image %d and profile %s: %v", request.ImageID, profile.ID, err)
 		writeGeneratePromptJSON(w, http.StatusBadGateway, generatePromptResponse{Error: "The prompt provider could not generate a response"})

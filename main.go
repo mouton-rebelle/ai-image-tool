@@ -127,9 +127,10 @@ type PageNumber struct {
 }
 
 type App struct {
-	db              *sql.DB
-	templates       *template.Template
-	promptGenerator PromptGenerator
+	db                 *sql.DB
+	templates          *template.Template
+	promptGenerator    PromptGenerator
+	promptImageBaseDir string
 }
 
 func main() {

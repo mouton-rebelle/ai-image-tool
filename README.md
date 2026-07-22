@@ -101,6 +101,8 @@ The available variables are:
 
 The model-specific system prompts live in [`prompt_systems/anima.md`](prompt_systems/anima.md) and [`prompt_systems/krea-2.md`](prompt_systems/krea-2.md). They are read for every generation request, so edits take effect immediately without recompiling or restarting the server.
 
+Each generation also sends the source image as a visual reference. The server resizes it in memory to a maximum of 1536px, encodes it as JPEG, and uses the provider's automatic image-detail setting; the original file is never modified. The server logs the returned text, image, completion, and reasoning token counts after each request so API usage can be measured directly.
+
 ### Civitai Import
 
 Import images and prompts directly from Civitai:
