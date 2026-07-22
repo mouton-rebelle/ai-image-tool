@@ -536,9 +536,7 @@
             categoryToggleText.textContent = currentImageData.is_nsfw ? 'show' : 'hide';
         }
 
-        if (!window.promptGenerationInProgress) {
-            window.resetPromptGenerationControls();
-        }
+        window.resetPromptGenerationControls();
     };
 
     window.closeLightbox = function() {
@@ -656,6 +654,9 @@
     };
 
     window.promptGenerationInProgress = false;
+    window.promptGenerationRequestID = 0;
+    window.pendingGeneratedPrompt = null;
+    window.pendingGeneratedPromptName = '';
 
     window.resetPromptGenerationControls = function() {
         const button = document.getElementById('generate-prompt-btn');
@@ -664,21 +665,66 @@
         const status = document.getElementById('prompt-generation-status');
 
         button.disabled = false;
-        button.classList.remove('is-loading', 'is-success', 'is-error');
+        button.classList.remove('is-loading', 'is-success', 'is-error', 'is-ready');
         button.setAttribute('aria-expanded', 'false');
         buttonText.textContent = 'Gen prompt';
         picker.hidden = true;
         status.textContent = '';
         status.className = 'prompt-generation-status';
+        window.promptGenerationInProgress = false;
+        window.promptGenerationRequestID++;
+        window.pendingGeneratedPrompt = null;
+        window.pendingGeneratedPromptName = '';
     };
 
     window.togglePromptModelPicker = function() {
         if (window.promptGenerationInProgress) return;
 
+        if (window.pendingGeneratedPrompt) {
+            window.copyReadyPrompt();
+            return;
+        }
+
         const button = document.getElementById('generate-prompt-btn');
+        const buttonText = document.getElementById('generate-prompt-text');
         const picker = document.getElementById('prompt-model-picker');
+        const status = document.getElementById('prompt-generation-status');
+        if (button.classList.contains('is-success') || button.classList.contains('is-error')) {
+            button.classList.remove('is-success', 'is-error');
+            buttonText.textContent = 'Gen prompt';
+            status.textContent = '';
+            status.className = 'prompt-generation-status';
+        }
         picker.hidden = !picker.hidden;
         button.setAttribute('aria-expanded', String(!picker.hidden));
+    };
+
+    window.copyReadyPrompt = async function() {
+        if (!window.pendingGeneratedPrompt) return;
+
+        const button = document.getElementById('generate-prompt-btn');
+        const buttonText = document.getElementById('generate-prompt-text');
+        const status = document.getElementById('prompt-generation-status');
+
+        button.disabled = true;
+        try {
+            await copyTextToClipboard(window.pendingGeneratedPrompt);
+            const targetModelName = window.pendingGeneratedPromptName;
+            window.pendingGeneratedPrompt = null;
+            window.pendingGeneratedPromptName = '';
+            button.classList.remove('is-ready', 'is-error');
+            button.classList.add('is-success');
+            buttonText.textContent = 'Copied!';
+            status.textContent = `${targetModelName} prompt copied to clipboard`;
+            status.className = 'prompt-generation-status is-success';
+        } catch (error) {
+            console.error('Failed to copy generated prompt:', error);
+            buttonText.textContent = 'Prompt ready — click to copy';
+            status.textContent = 'Clipboard still blocked. Click the button to try again.';
+            status.className = 'prompt-generation-status is-error';
+        } finally {
+            button.disabled = false;
+        }
     };
 
     window.generatePrompt = async function(targetModel, targetModelName) {
@@ -690,10 +736,14 @@
         const picker = document.getElementById('prompt-model-picker');
         const status = document.getElementById('prompt-generation-status');
 
+        const requestID = ++window.promptGenerationRequestID;
         window.promptGenerationInProgress = true;
+        window.pendingGeneratedPrompt = null;
+        window.pendingGeneratedPromptName = '';
         picker.hidden = true;
         button.setAttribute('aria-expanded', 'false');
         button.disabled = true;
+        button.classList.remove('is-success', 'is-error', 'is-ready');
         button.classList.add('is-loading');
         buttonText.textContent = `Generating for ${targetModelName}`;
         status.textContent = 'Remixing prompt…';
@@ -715,14 +765,32 @@
             if (!data.prompt) {
                 throw new Error('The provider returned an empty prompt');
             }
+            if (requestID !== window.promptGenerationRequestID) return;
 
-            await copyTextToClipboard(data.prompt);
-            button.classList.remove('is-loading');
-            button.classList.add('is-success');
-            buttonText.textContent = 'Copied!';
-            status.textContent = `${targetModelName} prompt copied to clipboard`;
-            status.className = 'prompt-generation-status is-success';
+            try {
+                await copyTextToClipboard(data.prompt);
+                if (requestID !== window.promptGenerationRequestID) return;
+
+                button.classList.remove('is-loading');
+                button.classList.add('is-success');
+                buttonText.textContent = 'Copied!';
+                status.textContent = `${targetModelName} prompt copied to clipboard`;
+                status.className = 'prompt-generation-status is-success';
+            } catch (copyError) {
+                if (requestID !== window.promptGenerationRequestID) return;
+
+                console.warn('Automatic prompt copy was blocked:', copyError);
+                window.pendingGeneratedPrompt = data.prompt;
+                window.pendingGeneratedPromptName = targetModelName;
+                button.classList.remove('is-loading');
+                button.classList.add('is-ready');
+                buttonText.textContent = 'Prompt ready — click to copy';
+                status.textContent = 'Clipboard blocked after generation. Click the button to copy.';
+                status.className = 'prompt-generation-status';
+            }
         } catch (error) {
+            if (requestID !== window.promptGenerationRequestID) return;
+
             console.error('Error generating prompt:', error);
             button.classList.remove('is-loading');
             button.classList.add('is-error');
@@ -730,8 +798,10 @@
             status.textContent = error.message || 'Prompt generation failed';
             status.className = 'prompt-generation-status is-error';
         } finally {
-            window.promptGenerationInProgress = false;
-            button.disabled = false;
+            if (requestID === window.promptGenerationRequestID) {
+                window.promptGenerationInProgress = false;
+                button.disabled = false;
+            }
         }
     };
 

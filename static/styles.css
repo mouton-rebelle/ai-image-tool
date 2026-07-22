@@ -499,6 +499,14 @@ body {
     background: #c0392b;
 }
 
+.generate-prompt-btn.is-ready {
+    background: #d9822b;
+}
+
+.generate-prompt-btn.is-ready:hover:not(:disabled) {
+    background: #bd6f1f;
+}
+
 .prompt-loader {
     display: none;
     width: 12px;
