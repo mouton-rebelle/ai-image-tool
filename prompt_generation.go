@@ -96,9 +96,7 @@ type chatCompletionResponse struct {
 	Choices []struct {
 		Message chatCompletionMessage `json:"message"`
 	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
+	Error json.RawMessage `json:"error,omitempty"`
 }
 
 func newPromptGeneratorFromEnv() (PromptGenerator, string) {
@@ -174,8 +172,8 @@ func (g *OpenAICompatiblePromptGenerator) Generate(ctx context.Context, systemPr
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		message := http.StatusText(resp.StatusCode)
-		if completion.Error != nil && strings.TrimSpace(completion.Error.Message) != "" {
-			message = completion.Error.Message
+		if providerMessage := chatCompletionErrorMessage(completion.Error); providerMessage != "" {
+			message = providerMessage
 		}
 		return "", fmt.Errorf("chat completion failed with status %d: %s", resp.StatusCode, message)
 	}
@@ -190,6 +188,26 @@ func (g *OpenAICompatiblePromptGenerator) Generate(ctx context.Context, systemPr
 	}
 
 	return generatedPrompt, nil
+}
+
+func chatCompletionErrorMessage(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+
+	var message string
+	if err := json.Unmarshal(raw, &message); err == nil {
+		return strings.TrimSpace(message)
+	}
+
+	var structured struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &structured); err == nil {
+		return strings.TrimSpace(structured.Message)
+	}
+
+	return ""
 }
 
 type generatePromptRequest struct {

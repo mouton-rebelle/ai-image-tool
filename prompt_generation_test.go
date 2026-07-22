@@ -52,23 +52,36 @@ func TestOpenAICompatiblePromptGenerator(t *testing.T) {
 }
 
 func TestOpenAICompatiblePromptGeneratorReturnsProviderError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":{"message":"credits exhausted"}}`))
-	}))
-	defer server.Close()
-
-	generator := &OpenAICompatiblePromptGenerator{
-		apiKey:  "test-key",
-		baseURL: server.URL,
-		model:   "test-model",
-		client:  server.Client(),
+	tests := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{name: "structured error", body: `{"error":{"message":"credits exhausted"}}`, expected: "credits exhausted"},
+		{name: "string error", body: `{"error":"invalid API key"}`, expected: "invalid API key"},
 	}
 
-	_, err := generator.Generate(context.Background(), "system", "source")
-	if err == nil || !strings.Contains(err.Error(), "credits exhausted") {
-		t.Fatalf("expected provider error, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			generator := &OpenAICompatiblePromptGenerator{
+				apiKey:  "test-key",
+				baseURL: server.URL,
+				model:   "test-model",
+				client:  server.Client(),
+			}
+
+			_, err := generator.Generate(context.Background(), "system", "source")
+			if err == nil || !strings.Contains(err.Error(), tt.expected) {
+				t.Fatalf("expected provider error, got %v", err)
+			}
+		})
 	}
 }
 
