@@ -44,6 +44,7 @@ Thumbs.db
 *.temp
 
 .claude
-# Environment files (optional - uncomment if you store secrets)
+# Local 1Password references and environment files
+.env.op
 # .env
 # .env.local

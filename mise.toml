@@ -1,0 +1,16 @@
+[tools]
+go = "1.23.5"
+air = "1.67.2"
+op = "2.34.1"
+
+[tasks.deps]
+description = "Download and verify Go module dependencies"
+run = [
+  "go mod download",
+  "go mod verify",
+]
+
+[tasks.dev]
+description = "Run the development server with secrets injected by 1Password"
+depends = ["deps"]
+run = "op run --env-file=.env.op -- air"

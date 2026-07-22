@@ -29,13 +29,27 @@ Download the latest release for your platform:
 
 ### Build from Source
 
-Requirements: Go 1.21+
+Requirements: [mise](https://mise.jdx.dev/) and the [1Password CLI](https://developer.1password.com/docs/cli/)
 
 ```bash
 git clone https://github.com/your-username/ai-generated-image-viewer.git
 cd ai-generated-image-viewer
-go build -o ai-generated-image-viewer
+cp .env.op.example .env.op
+# Edit .env.op with the secret references copied from 1Password.
+mise trust
+mise run dev
 ```
+
+`mise run dev` installs the declared Go, Air, and 1Password CLI versions when needed, downloads and verifies the Go modules, injects `XAI_API_KEY` and `CIVITAI_TOKEN` for the child process with `op run`, then starts Air. The resolved secret values are never written to the project.
+
+The local `.env.op` should contain references matching your vault and item names:
+
+```dotenv
+XAI_API_KEY="op://<vault>/<xai-item>/<field>"
+CIVITAI_TOKEN="op://<vault>/<civitai-item>/<field>"
+```
+
+Non-secret import settings such as `CIVITAI_USERNAME` and `AUTO_IMPORT_ON_STARTUP` can remain in `civitai.config`. Injected environment variables take precedence over values in that file, so its old `CIVITAI_TOKEN` entry can be removed after verifying the new development command.
 
 ## Quick Start
 

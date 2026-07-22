@@ -1,9 +1,10 @@
 # Civitai Import Configuration
 # Copy this file to civitai.config and customize the values
 
-# Required: API token for higher rate limits
+# Optional here: API token for higher rate limits.
+# Prefer injecting CIVITAI_TOKEN with `op run`; environment variables override this file.
 # Get your token from https://civitai.com/user/account
-CIVITAI_TOKEN=your_token_here
+# CIVITAI_TOKEN=your_token_here
 
 # Required: Username to fetch images from
 CIVITAI_USERNAME=your_username
