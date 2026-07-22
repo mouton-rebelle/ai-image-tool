@@ -34,30 +34,42 @@ type PromptProfile struct {
 	SystemPrompt string
 }
 
-var promptProfiles = map[string]PromptProfile{
+type promptProfileDefinition struct {
+	Name             string
+	SystemPromptPath string
+}
+
+var promptProfileDefinitions = map[string]promptProfileDefinition{
 	"anima": {
-		ID:   "anima",
-		Name: "Anima",
-		SystemPrompt: `You are an expert prompt engineer for the Anima image generation model by CircleStone Labs.
-
-Rewrite the user's source image prompt for Anima while preserving its subject, composition, action, mood, and important visual details. Anima is intended for anime, illustration, and artistic imagery rather than photorealism.
-
-Return one positive prompt only, with no heading, explanation, quotation marks, markdown, or negative prompt. Use concise comma-separated Danbooru/Gelbooru-style tags. Put tags in this order: quality/meta/year/safety; character count and gender; named character and series when present; then appearance, clothing, pose/action, framing, environment, lighting, color, mood, and style. Use lowercase and spaces for tags; only score tags keep underscores. Start with masterpiece, best quality, score_7, followed by the appropriate safety tag inferred from the source (safe, sensitive, questionable, or explicit). Remove model-specific syntax, LoRA tags, duplicated concepts, negative instructions, and generation settings. Do not censor, invent named characters, or materially change the scene.`,
+		Name:             "Anima",
+		SystemPromptPath: "prompt_systems/anima.md",
 	},
 	"krea-2": {
-		ID:   "krea-2",
-		Name: "Krea 2",
-		SystemPrompt: `You are an expert prompt editor for the Krea 2 image generation model.
-
-Rewrite the user's source image prompt into a clear natural-language creative brief while preserving its subject, composition, action, mood, and important visual details. Krea 2 understands diverse prompting styles and rewards a strong visual idea with selective, concrete detail.
-
-Return one prompt only, with no heading, explanation, quotation marks, markdown, or negative prompt. Lead with the subject and action, then describe composition or camera framing, setting, lighting, palette, mood, medium, and the few textures or aesthetic cues that matter most. Prefer fluent visual language over tag soup. Remove model-specific syntax, LoRA tags, quality-score boilerplate, duplicated concepts, negative instructions, and generation settings. Do not invent named characters or materially change the scene. Keep enough openness for aesthetic exploration instead of over-specifying every detail.`,
+		Name:             "Krea 2",
+		SystemPromptPath: "prompt_systems/krea-2.md",
 	},
 }
 
-func getPromptProfile(id string) (PromptProfile, bool) {
-	profile, ok := promptProfiles[id]
-	return profile, ok
+func getPromptProfile(id string) (PromptProfile, bool, error) {
+	definition, ok := promptProfileDefinitions[id]
+	if !ok {
+		return PromptProfile{}, false, nil
+	}
+
+	content, err := os.ReadFile(definition.SystemPromptPath)
+	if err != nil {
+		return PromptProfile{}, true, fmt.Errorf("read system prompt %s: %w", definition.SystemPromptPath, err)
+	}
+	systemPrompt := strings.TrimSpace(string(content))
+	if systemPrompt == "" {
+		return PromptProfile{}, true, fmt.Errorf("system prompt %s is empty", definition.SystemPromptPath)
+	}
+
+	return PromptProfile{
+		ID:           id,
+		Name:         definition.Name,
+		SystemPrompt: systemPrompt,
+	}, true, nil
 }
 
 // OpenAICompatiblePromptGenerator works with xAI and other providers exposing
@@ -213,9 +225,14 @@ func (app *App) handleGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile, ok := getPromptProfile(request.TargetModel)
+	profile, ok, err := getPromptProfile(request.TargetModel)
 	if !ok {
 		writeGeneratePromptJSON(w, http.StatusBadRequest, generatePromptResponse{Error: "Unknown target model"})
+		return
+	}
+	if err != nil {
+		log.Printf("Failed to load prompt profile %s: %v", request.TargetModel, err)
+		writeGeneratePromptJSON(w, http.StatusInternalServerError, generatePromptResponse{Error: "The target model prompt could not be loaded"})
 		return
 	}
 
