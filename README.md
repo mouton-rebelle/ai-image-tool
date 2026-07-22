@@ -61,6 +61,29 @@ go build -o ai-generated-image-viewer
 - Use the search bar to find images by prompt content
 - Filter by model or NSFW status. The NSFW filter is hidden behind a shortcut, CTRL+d.
 - Click images to view full size with metadata
+- From the image viewer, click **Gen prompt**, choose Anima or Krea 2, and the remixed prompt is copied to the clipboard when ready
+
+### Prompt generation
+
+Prompt remixing uses an OpenAI-compatible chat-completions endpoint. xAI Grok is the default provider, but the API URL and model are configurable:
+
+```bash
+XAI_API_KEY=your_api_key ./ai-generated-image-viewer
+
+# Generic provider configuration (takes precedence over the XAI_* aliases)
+PROMPT_LLM_API_KEY=your_api_key \
+PROMPT_LLM_BASE_URL=https://api.example.com/v1 \
+PROMPT_LLM_MODEL=provider-model-name \
+./ai-generated-image-viewer
+```
+
+The available variables are:
+
+- `PROMPT_LLM_API_KEY`: provider API key; falls back to `XAI_API_KEY`
+- `PROMPT_LLM_BASE_URL`: OpenAI-compatible API base URL; falls back to `XAI_BASE_URL`, then `https://api.x.ai/v1`
+- `PROMPT_LLM_MODEL`: chat model; falls back to `XAI_MODEL`, then `grok-4-1-fast-reasoning`
+
+The model-specific system prompts live in [`prompt_systems/anima.md`](prompt_systems/anima.md) and [`prompt_systems/krea-2.md`](prompt_systems/krea-2.md). They are read for every generation request, so edits take effect immediately without recompiling or restarting the server.
 
 ### Civitai Import
 
@@ -97,6 +120,9 @@ Import images and prompts directly from Civitai:
 
 - `CIVITAI_TOKEN`: API token for Civitai (get from [civitai.com/user/account](https://civitai.com/user/account))
 - `CIVITAI_USERNAME`: Username to import images from
+- `PROMPT_LLM_API_KEY`: API key for prompt generation (or use `XAI_API_KEY`)
+- `PROMPT_LLM_BASE_URL`: OpenAI-compatible API base URL
+- `PROMPT_LLM_MODEL`: model used to remix prompts
 
 ### Directory Structure
 
@@ -108,6 +134,7 @@ ai-generated-image-viewer/
 ├── images.db              # SQLite database
 ├── prompts_sfw.txt        # SFW prompts (import output)
 ├── prompts_nsfw.txt       # NSFW prompts (import output)
+├── prompt_systems/        # Editable system prompts for prompt remixing
 ├── excluded_words.txt     # Words to exclude from prompts files
 └── civitai.config         # Civitai import configuration
 ```
