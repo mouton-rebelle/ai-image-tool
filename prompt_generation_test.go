@@ -30,10 +30,11 @@ func TestOpenAICompatiblePromptGenerator(t *testing.T) {
 	defer server.Close()
 
 	generator := &OpenAICompatiblePromptGenerator{
-		apiKey:  "test-key",
-		baseURL: server.URL + "/v1",
-		model:   "test-model",
-		client:  server.Client(),
+		apiKey:          "test-key",
+		baseURL:         server.URL + "/v1",
+		model:           "test-model",
+		reasoningEffort: "medium",
+		client:          server.Client(),
 	}
 
 	got, err := generator.Generate(context.Background(), "system instructions", "source prompt")
@@ -46,8 +47,37 @@ func TestOpenAICompatiblePromptGenerator(t *testing.T) {
 	if received.Model != "test-model" {
 		t.Errorf("unexpected model: %q", received.Model)
 	}
+	if received.ReasoningEffort != "medium" {
+		t.Errorf("unexpected reasoning effort: %q", received.ReasoningEffort)
+	}
 	if len(received.Messages) != 2 || received.Messages[0].Role != "system" || received.Messages[1].Content != "source prompt" {
 		t.Errorf("unexpected messages: %#v", received.Messages)
+	}
+}
+
+func TestNewPromptGeneratorFromEnvUsesGrok45MediumDefaults(t *testing.T) {
+	t.Setenv("PROMPT_LLM_API_KEY", "")
+	t.Setenv("PROMPT_LLM_BASE_URL", "")
+	t.Setenv("PROMPT_LLM_MODEL", "")
+	t.Setenv("PROMPT_LLM_REASONING_EFFORT", "")
+	t.Setenv("XAI_API_KEY", "test-key")
+	t.Setenv("XAI_BASE_URL", "")
+	t.Setenv("XAI_MODEL", "")
+	t.Setenv("XAI_REASONING_EFFORT", "")
+
+	generator, description := newPromptGeneratorFromEnv()
+	configured, ok := generator.(*OpenAICompatiblePromptGenerator)
+	if !ok {
+		t.Fatalf("unexpected generator type: %T", generator)
+	}
+	if configured.model != "grok-4.5" {
+		t.Errorf("unexpected default model: %q", configured.model)
+	}
+	if configured.reasoningEffort != "medium" {
+		t.Errorf("unexpected default reasoning effort: %q", configured.reasoningEffort)
+	}
+	if !strings.Contains(description, `model "grok-4.5" (reasoning effort: medium)`) {
+		t.Errorf("unexpected description: %q", description)
 	}
 }
 

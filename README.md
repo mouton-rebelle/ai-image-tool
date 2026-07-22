@@ -88,6 +88,7 @@ XAI_API_KEY=your_api_key ./ai-generated-image-viewer
 PROMPT_LLM_API_KEY=your_api_key \
 PROMPT_LLM_BASE_URL=https://api.example.com/v1 \
 PROMPT_LLM_MODEL=provider-model-name \
+PROMPT_LLM_REASONING_EFFORT=medium \
 ./ai-generated-image-viewer
 ```
 
@@ -95,7 +96,8 @@ The available variables are:
 
 - `PROMPT_LLM_API_KEY`: provider API key; falls back to `XAI_API_KEY`
 - `PROMPT_LLM_BASE_URL`: OpenAI-compatible API base URL; falls back to `XAI_BASE_URL`, then `https://api.x.ai/v1`
-- `PROMPT_LLM_MODEL`: chat model; falls back to `XAI_MODEL`, then `grok-4-1-fast-reasoning`
+- `PROMPT_LLM_MODEL`: chat model; falls back to `XAI_MODEL`, then `grok-4.5`
+- `PROMPT_LLM_REASONING_EFFORT`: reasoning level; falls back to `XAI_REASONING_EFFORT`, then `medium`
 
 The model-specific system prompts live in [`prompt_systems/anima.md`](prompt_systems/anima.md) and [`prompt_systems/krea-2.md`](prompt_systems/krea-2.md). They are read for every generation request, so edits take effect immediately without recompiling or restarting the server.
 
@@ -137,6 +139,7 @@ Import images and prompts directly from Civitai:
 - `PROMPT_LLM_API_KEY`: API key for prompt generation (or use `XAI_API_KEY`)
 - `PROMPT_LLM_BASE_URL`: OpenAI-compatible API base URL
 - `PROMPT_LLM_MODEL`: model used to remix prompts
+- `PROMPT_LLM_REASONING_EFFORT`: reasoning level used for prompt generation
 
 ### Directory Structure
 

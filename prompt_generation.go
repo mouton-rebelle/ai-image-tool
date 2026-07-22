@@ -16,10 +16,12 @@ import (
 )
 
 const (
-	defaultPromptLLMBaseURL = "https://api.x.ai/v1"
-	defaultPromptLLMModel   = "grok-4-1-fast-reasoning"
-	maxPromptRequestBytes   = 4 << 10
-	maxPromptResponseBytes  = 2 << 20
+	defaultPromptLLMBaseURL      = "https://api.x.ai/v1"
+	defaultPromptLLMModel        = "grok-4.5"
+	defaultPromptReasoningEffort = "medium"
+	maxPromptRequestBytes        = 4 << 10
+	maxPromptResponseBytes       = 2 << 20
+	promptLLMRequestTimeout      = 6 * time.Minute
 )
 
 // PromptGenerator is the provider-neutral boundary used by the application.
@@ -75,15 +77,17 @@ func getPromptProfile(id string) (PromptProfile, bool, error) {
 // OpenAICompatiblePromptGenerator works with xAI and other providers exposing
 // the OpenAI chat-completions contract.
 type OpenAICompatiblePromptGenerator struct {
-	apiKey  string
-	baseURL string
-	model   string
-	client  *http.Client
+	apiKey          string
+	baseURL         string
+	model           string
+	reasoningEffort string
+	client          *http.Client
 }
 
 type chatCompletionRequest struct {
 	Model               string                  `json:"model"`
 	Messages            []chatCompletionMessage `json:"messages"`
+	ReasoningEffort     string                  `json:"reasoning_effort,omitempty"`
 	MaxCompletionTokens int                     `json:"max_completion_tokens,omitempty"`
 }
 
@@ -115,12 +119,18 @@ func newPromptGeneratorFromEnv() (PromptGenerator, string) {
 		model = defaultPromptLLMModel
 	}
 
+	reasoningEffort := firstNonEmptyEnv("PROMPT_LLM_REASONING_EFFORT", "XAI_REASONING_EFFORT")
+	if reasoningEffort == "" {
+		reasoningEffort = defaultPromptReasoningEffort
+	}
+
 	return &OpenAICompatiblePromptGenerator{
-		apiKey:  apiKey,
-		baseURL: strings.TrimRight(baseURL, "/"),
-		model:   model,
-		client:  &http.Client{Timeout: 90 * time.Second},
-	}, fmt.Sprintf("model %q at %s", model, strings.TrimRight(baseURL, "/"))
+		apiKey:          apiKey,
+		baseURL:         strings.TrimRight(baseURL, "/"),
+		model:           model,
+		reasoningEffort: reasoningEffort,
+		client:          &http.Client{Timeout: promptLLMRequestTimeout},
+	}, fmt.Sprintf("model %q (reasoning effort: %s) at %s", model, reasoningEffort, strings.TrimRight(baseURL, "/"))
 }
 
 func firstNonEmptyEnv(keys ...string) string {
@@ -134,7 +144,8 @@ func firstNonEmptyEnv(keys ...string) string {
 
 func (g *OpenAICompatiblePromptGenerator) Generate(ctx context.Context, systemPrompt, sourcePrompt string) (string, error) {
 	requestBody := chatCompletionRequest{
-		Model: g.model,
+		Model:           g.model,
+		ReasoningEffort: g.reasoningEffort,
 		Messages: []chatCompletionMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: sourcePrompt},
