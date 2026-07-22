@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // loadExcludedWords loads excluded words from excluded_words.txt
@@ -35,30 +36,93 @@ func loadExcludedWords() []string {
 	return cleanWords
 }
 
-// cleanPrompt removes LoRA tags and excluded words from a prompt
+// Precompiled regexes for prompt cleaning
+var (
+	loraRegex          = regexp.MustCompile(`<lora:[^>]+>`)
+	artistTagRegex     = regexp.MustCompile(`@\w+(?:\s+\w+)?`)
+	scoreTagRegex      = regexp.MustCompile(`(?i)\bscore_\d+(?:_up)?\b`)
+	standaloneNumRegex = regexp.MustCompile(`\b\d{4,}\b`)
+	smoothPrefixRegex  = regexp.MustCompile(`(?i)Smooth\s+(?:Quality|Negative)\s*-\s*Illustrious\s*,?\s*`)
+	jsonMetadataRegex  = regexp.MustCompile(`(?i)sui_image_params|swarm_version|cfgscale`)
+	multiCommaRegex    = regexp.MustCompile(`\s*,\s*,[\s,]*`)
+	leadingCommaRegex  = regexp.MustCompile(`^\s*,\s*`)
+	trailingCommaRegex = regexp.MustCompile(`\s*,\s*$`)
+	multiSpaceRegex = regexp.MustCompile(`\s+`)
+)
+
+// sanitizeUTF8 ensures the string is valid UTF-8 by replacing invalid bytes
+// and converting common problematic characters (e.g. 0xa0 non-breaking space)
+func sanitizeUTF8(s string) string {
+	if utf8.ValidString(s) {
+		// Still replace non-breaking spaces (U+00A0) with regular spaces
+		return strings.ReplaceAll(s, "\u00a0", " ")
+	}
+	// Strip invalid UTF-8 sequences byte by byte
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size <= 1 {
+			// Invalid byte — check if it's a known Latin-1 char we can salvage
+			if s[i] == 0xa0 {
+				b.WriteByte(' ')
+			}
+			// Otherwise skip the invalid byte
+			i++
+			continue
+		}
+		if r == '\u00a0' {
+			b.WriteByte(' ')
+		} else {
+			b.WriteRune(r)
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// cleanPrompt removes LoRA tags, artist tags, quality/score tags, and excluded words from a prompt
 func cleanPrompt(prompt string, excludedWords []string) string {
 	if prompt == "" {
 		return ""
 	}
 
-	// Remove LoRA tags
-	loraRegex := regexp.MustCompile(`<lora:[^>]+>`)
-	cleaned := loraRegex.ReplaceAllString(prompt, "")
+	// Skip entirely if raw JSON metadata leaked through
+	if jsonMetadataRegex.MatchString(prompt) {
+		return ""
+	}
+
+	// Sanitize invalid UTF-8 before any regex processing
+	cleaned := sanitizeUTF8(prompt)
+
+	// Remove LoRA tags: <lora:name:weight>
+	cleaned = loraRegex.ReplaceAllString(cleaned, "")
+
+	// Remove @artist tags (Anima Preview format): @minaba hideo, @torotei, etc.
+	cleaned = artistTagRegex.ReplaceAllString(cleaned, "")
+
+	// Remove score tags: score_6_up, score_7, etc.
+	cleaned = scoreTagRegex.ReplaceAllString(cleaned, "")
+
+	// Remove standalone large numbers (model IDs / trigger codes): 106858, etc.
+	cleaned = standaloneNumRegex.ReplaceAllString(cleaned, "")
+
+	// Remove "Smooth Quality - Illustrious" / "Smooth Negative- Illustrious" prefixes
+	cleaned = smoothPrefixRegex.ReplaceAllString(cleaned, "")
 
 	// Remove excluded words
 	for _, word := range excludedWords {
 		if word != "" {
-			// Case-insensitive replacement
 			regex := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(word) + `\b`)
 			cleaned = regex.ReplaceAllString(cleaned, "")
 		}
 	}
 
 	// Clean up extra spaces and commas
-	cleaned = regexp.MustCompile(`\s*,\s*,\s*`).ReplaceAllString(cleaned, ", ")
-	cleaned = regexp.MustCompile(`^\s*,\s*`).ReplaceAllString(cleaned, "")
-	cleaned = regexp.MustCompile(`\s*,\s*$`).ReplaceAllString(cleaned, "")
-	cleaned = regexp.MustCompile(`\s+`).ReplaceAllString(cleaned, " ")
+	cleaned = multiCommaRegex.ReplaceAllString(cleaned, ", ")
+	cleaned = leadingCommaRegex.ReplaceAllString(cleaned, "")
+	cleaned = trailingCommaRegex.ReplaceAllString(cleaned, "")
+	cleaned = multiSpaceRegex.ReplaceAllString(cleaned, " ")
 	cleaned = strings.TrimSpace(cleaned)
 
 	return cleaned
@@ -116,8 +180,11 @@ func deduplicatePromptFiles() error {
 			return fmt.Errorf("failed to read %s: %v", filename, err)
 		}
 		
+		// Sanitize content in case existing file has invalid UTF-8
+		sanitized := sanitizeUTF8(string(content))
+
 		// Split into lines and deduplicate
-		lines := strings.Split(string(content), "\n")
+		lines := strings.Split(sanitized, "\n")
 		uniqueLines := make(map[string]bool)
 		var dedupedLines []string
 		

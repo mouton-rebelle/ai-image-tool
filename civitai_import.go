@@ -27,6 +27,7 @@ type CivitaiImage struct {
 	Width     int    `json:"width"`
 	Height    int    `json:"height"`
 	NSFW      bool   `json:"nsfw"`
+	NSFWLevel string `json:"nsfwLevel"`
 	CreatedAt string `json:"createdAt"`
 	Meta      struct {
 		Prompt    string  `json:"prompt"`
@@ -296,9 +297,12 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 		ext = ".jpg" // Default extension
 	}
 
-	// Determine directory based on NSFW flag
+	// Determine directory based on NSFW level.
+	// Civitai's `nsfw` boolean is true for anything above "None" (i.e. Soft/
+	// PG-13 too), which over-classifies. Match the historical behaviour: only
+	// the hardest "X" level goes to images_nsfw; None/Soft/Mature stay SFW.
 	dir := "images"
-	if img.NSFW {
+	if img.NSFWLevel == "X" {
 		dir = "images_nsfw"
 	}
 
@@ -316,8 +320,9 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 		return false, nil // File already exists in NSFW directory
 	}
 
-	// Download the image
-	resp, err := http.Get(img.URL)
+	// Download the image (use a client with a timeout; the default client has none)
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Get(img.URL)
 	if err != nil {
 		return false, err
 	}
@@ -327,17 +332,37 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 		return false, fmt.Errorf("failed to download image: status %d", resp.StatusCode)
 	}
 
-	// Create the file
-	file, err := os.Create(filePath)
+	// Download to a temporary file first so a partial/interrupted download never
+	// leaves a corrupt file at the final path (which the skip logic would then
+	// treat as a complete download and never retry).
+	tmpPath := filePath + ".part"
+	file, err := os.Create(tmpPath)
 	if err != nil {
 		return false, err
 	}
-	defer file.Close()
 
-	// Copy the image data
-	_, err = io.Copy(file, resp.Body)
-	if err != nil {
-		return false, err
+	written, copyErr := io.Copy(file, resp.Body)
+	closeErr := file.Close()
+
+	// Validate the download: any copy error, or a byte count that doesn't match
+	// the advertised Content-Length, means the file is truncated.
+	if copyErr != nil {
+		os.Remove(tmpPath)
+		return false, fmt.Errorf("download failed for image %d: %v", img.ID, copyErr)
+	}
+	if closeErr != nil {
+		os.Remove(tmpPath)
+		return false, fmt.Errorf("failed to write image %d: %v", img.ID, closeErr)
+	}
+	if resp.ContentLength > 0 && written != resp.ContentLength {
+		os.Remove(tmpPath)
+		return false, fmt.Errorf("truncated download for image %d: got %d bytes, expected %d", img.ID, written, resp.ContentLength)
+	}
+
+	// Atomically move the fully-downloaded file into place.
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath)
+		return false, fmt.Errorf("failed to finalize image %d: %v", img.ID, err)
 	}
 
 	return true, nil
