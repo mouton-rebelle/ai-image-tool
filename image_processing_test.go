@@ -130,7 +130,9 @@ func TestRealPNGFile(t *testing.T) {
 		return
 	}
 
-	app := &App{db: nil}
+	app := &App{}
+	db := setupTestDB(t, app)
+	defer db.Close()
 
 	// Test the first PNG file found
 	imagePath := pngFiles[0]
