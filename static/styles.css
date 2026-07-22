@@ -450,10 +450,123 @@ body {
     background: #0056b3;
 }
 
-.lightbox-category-toggle {
+.lightbox-actions {
     margin-top: 15px;
     padding-top: 15px;
     border-top: 1px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.prompt-generation-controls {
+    flex: 1;
+    min-width: 0;
+}
+
+.generate-prompt-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 7px 12px;
+    border: 0;
+    border-radius: 4px;
+    background: #007bff;
+    color: white;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    transition: background-color 0.2s;
+}
+
+.generate-prompt-btn:hover:not(:disabled) {
+    background: #0069d9;
+}
+
+.generate-prompt-btn:disabled {
+    cursor: wait;
+    opacity: 0.8;
+}
+
+.generate-prompt-btn.is-success {
+    background: #28a745;
+}
+
+.generate-prompt-btn.is-error {
+    background: #c0392b;
+}
+
+.prompt-loader {
+    display: none;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.45);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: prompt-spinner 0.7s linear infinite;
+}
+
+.generate-prompt-btn.is-loading .prompt-loader {
+    display: block;
+}
+
+@keyframes prompt-spinner {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.prompt-model-picker {
+    margin-top: 8px;
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.prompt-model-picker[hidden] {
+    display: none;
+}
+
+.prompt-model-picker span {
+    display: block;
+    margin-bottom: 7px;
+    color: #bbb;
+    font-size: 11px;
+}
+
+.prompt-model-picker button {
+    margin-right: 5px;
+    padding: 5px 9px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.12);
+    color: white;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.prompt-model-picker button:hover {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.prompt-generation-status {
+    min-height: 15px;
+    margin: 6px 0 0;
+    color: #bbb;
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.prompt-generation-status.is-success {
+    color: #7edb91;
+}
+
+.prompt-generation-status.is-error {
+    color: #ff8f85;
 }
 
 .category-toggle-btn {

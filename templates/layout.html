@@ -79,7 +79,19 @@
                         <p id="lightbox-neg-prompt" class="clickable-prompt" onclick="copyNegativePrompt()" title="Click to copy negative prompt"></p>
                     </div>
                 </div>
-                <div class="lightbox-category-toggle">
+                <div class="lightbox-actions">
+                    <div class="prompt-generation-controls">
+                        <button id="generate-prompt-btn" class="generate-prompt-btn" type="button" onclick="togglePromptModelPicker()" aria-expanded="false" aria-controls="prompt-model-picker">
+                            <span id="generate-prompt-text">Gen prompt</span>
+                            <span class="prompt-loader" aria-hidden="true"></span>
+                        </button>
+                        <div id="prompt-model-picker" class="prompt-model-picker" hidden>
+                            <span>Remix for:</span>
+                            <button type="button" onclick="generatePrompt('anima', 'Anima')">Anima</button>
+                            <button type="button" onclick="generatePrompt('krea-2', 'Krea 2')">Krea 2</button>
+                        </div>
+                        <p id="prompt-generation-status" class="prompt-generation-status" aria-live="polite"></p>
+                    </div>
                     <button id="category-toggle-btn" class="category-toggle-btn" onclick="toggleImageCategory()" title="Move to other category">
                         <span id="category-toggle-text">hide</span>
                     </button>
@@ -523,6 +535,10 @@
         if (currentImageData && categoryToggleText) {
             categoryToggleText.textContent = currentImageData.is_nsfw ? 'show' : 'hide';
         }
+
+        if (!window.promptGenerationInProgress) {
+            window.resetPromptGenerationControls();
+        }
     };
 
     window.closeLightbox = function() {
@@ -565,15 +581,18 @@
         }
     };
 
-    // Generic copy function with visual feedback
-    function copyWithFeedback(text, elementId, itemName) {
-        if (!text) return;
-
-        // Copy to clipboard with fallback
+    function copyTextToClipboard(text) {
         if (navigator.clipboard && window.isSecureContext) {
-            navigator.clipboard.writeText(text).then(() => showCopyFeedback(elementId)).catch(err => showCopyError(itemName, err));
-        } else {
-            // Fallback for insecure contexts
+            return navigator.clipboard.writeText(text).catch(() => copyTextWithLegacyFallback(text));
+        }
+
+        // Clipboard API requires HTTPS outside localhost, so retain a fallback
+        // for the app's usual local-network URL.
+        return copyTextWithLegacyFallback(text);
+    }
+
+    function copyTextWithLegacyFallback(text) {
+        return new Promise((resolve, reject) => {
             const textArea = document.createElement('textarea');
             textArea.value = text;
             textArea.style.position = 'fixed';
@@ -584,18 +603,23 @@
             textArea.select();
 
             try {
-                const result = document.execCommand('copy');
-                document.body.removeChild(textArea);
-                if (result) {
-                    showCopyFeedback(elementId);
-                } else {
-                    showCopyError(itemName, new Error('execCommand failed'));
-                }
+                const copied = document.execCommand('copy');
+                copied ? resolve() : reject(new Error('execCommand failed'));
             } catch (err) {
+                reject(err);
+            } finally {
                 document.body.removeChild(textArea);
-                showCopyError(itemName, err);
             }
-        }
+        });
+    }
+
+    // Generic copy function with visual feedback
+    function copyWithFeedback(text, elementId, itemName) {
+        if (!text) return;
+
+        copyTextToClipboard(text)
+            .then(() => showCopyFeedback(elementId))
+            .catch(err => showCopyError(itemName, err));
     }
 
     function showCopyFeedback(elementId) {
@@ -629,6 +653,86 @@
 
     window.copySeed = function() {
         copyWithFeedback(window.currentSeed, 'lightbox-seed', 'seed');
+    };
+
+    window.promptGenerationInProgress = false;
+
+    window.resetPromptGenerationControls = function() {
+        const button = document.getElementById('generate-prompt-btn');
+        const buttonText = document.getElementById('generate-prompt-text');
+        const picker = document.getElementById('prompt-model-picker');
+        const status = document.getElementById('prompt-generation-status');
+
+        button.disabled = false;
+        button.classList.remove('is-loading', 'is-success', 'is-error');
+        button.setAttribute('aria-expanded', 'false');
+        buttonText.textContent = 'Gen prompt';
+        picker.hidden = true;
+        status.textContent = '';
+        status.className = 'prompt-generation-status';
+    };
+
+    window.togglePromptModelPicker = function() {
+        if (window.promptGenerationInProgress) return;
+
+        const button = document.getElementById('generate-prompt-btn');
+        const picker = document.getElementById('prompt-model-picker');
+        picker.hidden = !picker.hidden;
+        button.setAttribute('aria-expanded', String(!picker.hidden));
+    };
+
+    window.generatePrompt = async function(targetModel, targetModelName) {
+        const currentImageData = window.lightboxMetadata[window.currentLightboxIndex];
+        if (!currentImageData?.id || window.promptGenerationInProgress) return;
+
+        const button = document.getElementById('generate-prompt-btn');
+        const buttonText = document.getElementById('generate-prompt-text');
+        const picker = document.getElementById('prompt-model-picker');
+        const status = document.getElementById('prompt-generation-status');
+
+        window.promptGenerationInProgress = true;
+        picker.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+        button.disabled = true;
+        button.classList.add('is-loading');
+        buttonText.textContent = `Generating for ${targetModelName}`;
+        status.textContent = 'Remixing prompt…';
+        status.className = 'prompt-generation-status';
+
+        try {
+            const response = await fetch('/api/generate-prompt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    image_id: Number(currentImageData.id),
+                    target_model: targetModel
+                })
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Prompt generation failed');
+            }
+            if (!data.prompt) {
+                throw new Error('The provider returned an empty prompt');
+            }
+
+            await copyTextToClipboard(data.prompt);
+            button.classList.remove('is-loading');
+            button.classList.add('is-success');
+            buttonText.textContent = 'Copied!';
+            status.textContent = `${targetModelName} prompt copied to clipboard`;
+            status.className = 'prompt-generation-status is-success';
+        } catch (error) {
+            console.error('Error generating prompt:', error);
+            button.classList.remove('is-loading');
+            button.classList.add('is-error');
+            buttonText.textContent = 'Try again';
+            status.textContent = error.message || 'Prompt generation failed';
+            status.className = 'prompt-generation-status is-error';
+        } finally {
+            window.promptGenerationInProgress = false;
+            button.disabled = false;
+        }
     };
 
     window.toggleImageCategory = function() {
