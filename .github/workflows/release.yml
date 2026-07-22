@@ -92,9 +92,21 @@ jobs:
         
         # Create archive
         if [ "${{ matrix.goos }}" = "windows" ]; then
-          zip "ai-generated-image-viewer-${{ matrix.name }}.zip" "${binary_name}" civitai.config.example
+          zip -r "ai-generated-image-viewer-${{ matrix.name }}.zip" \
+            "${binary_name}" \
+            civitai.config.example \
+            excluded_words.txt \
+            prompt_systems \
+            static \
+            templates
         else
-          tar -czf "ai-generated-image-viewer-${{ matrix.name }}.tar.gz" "${binary_name}" civitai.config.example
+          tar -czf "ai-generated-image-viewer-${{ matrix.name }}.tar.gz" \
+            "${binary_name}" \
+            civitai.config.example \
+            excluded_words.txt \
+            prompt_systems \
+            static \
+            templates
         fi
 
     - name: Upload Release Assets
