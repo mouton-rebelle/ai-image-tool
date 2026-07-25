@@ -1020,7 +1020,6 @@
 
     window.removeDeletedImageFromView = function(imageID) {
         const deletedID = String(imageID);
-        const deletedIndex = window.lightboxMetadata.findIndex(metadata => metadata.id === deletedID);
         const imageLink = document.querySelector(
             `#unified-grid .image-card a[data-image-id="${deletedID}"]`
         );
@@ -1040,29 +1039,9 @@
         }
 
         window.buildLightboxImageList();
-        if (window.lightboxMetadata.length === 0) {
-            window.closeLightbox();
-            return;
-        }
-
-        window.currentLightboxIndex = Math.min(
-            Math.max(deletedIndex, 0),
-            window.lightboxMetadata.length - 1
-        );
-        const metadata = window.lightboxMetadata[window.currentLightboxIndex];
-        document.getElementById('lightbox-img').src = metadata.src;
-        window.populateLightboxMetadata(
-            metadata.model,
-            metadata.steps,
-            metadata.cfg,
-            metadata.sampler,
-            metadata.scheduler,
-            metadata.seed,
-            metadata.prompt,
-            metadata.negPrompt,
-            metadata.loras
-        );
-        window.updateArrowVisibility();
+        window.currentLightboxIndex = 0;
+        window.closeLightbox();
+        document.getElementById('lightbox-img').removeAttribute('src');
 
         window.modelStatsRequestVersion++;
         window.refreshModelOptions(
