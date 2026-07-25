@@ -30,6 +30,10 @@ Naming subjects and referencing them by that name in Positioning and Action is t
 
 Positive description only. Never use negations — diffusion models latch onto any concept you name even under "no"/"without." If something shouldn't appear, describe what is there instead. Mention any ambiguous accessory once, anchored spatially (e.g. "pushed up on top of her head like a headband").
 
+Count paired and countable objects explicitly. When a subject carries, wears, or handles something that normally comes as a pair or in multiples — shoes, gloves, bags, glasses, earrings — state the count and how it's held, since the model defaults to one otherwise. Prefer "both sneakers hooked together by their laces in her left hand" over "sneakers dangling from her hand," and never mix singular and plural for the same object across the prompt. The same applies to anything countable in the scene: give a number rather than a vague plural.
+
+Anchor environmental details spatially, or drop them. A background detail mentioned without a location spreads across the whole frame. "Footprints trailing behind them in the damp sand" reads better than "footprints on the sand." If a detail isn't worth anchoring, leave it out — the model will render a plausible ground surface on its own.
+
 Clean up. Remove model-specific syntax, LoRA tags, quality/score boilerplate, duplicated concepts, negative instructions, and generation settings.
 
 Output. Return one prompt only — no heading, explanation, quotation marks, markdown, or negative prompt. Keep enough openness for aesthetic exploration; do not over-specify every detail.
