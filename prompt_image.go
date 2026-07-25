@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -31,7 +32,15 @@ func preparePromptImage(imagePath string) (*PromptImage, error) {
 	}
 	defer file.Close()
 
-	decoded, _, err := image.Decode(file)
+	return preparePromptImageFromReader(file)
+}
+
+func preparePromptImageFromBytes(data []byte) (*PromptImage, error) {
+	return preparePromptImageFromReader(bytes.NewReader(data))
+}
+
+func preparePromptImageFromReader(source io.Reader) (*PromptImage, error) {
+	decoded, _, err := image.Decode(source)
 	if err != nil {
 		return nil, fmt.Errorf("decode prompt image: %w", err)
 	}

@@ -20,6 +20,10 @@ go.sum
 tmp
 node_modules/
 
+# Python bytecode from the ComfyUI custom node
+__pycache__/
+*.pyc
+
 # IDE and editor files
 .vscode/
 .idea/

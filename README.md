@@ -103,6 +103,26 @@ Prompt instructions are composed from two independent layers. [`prompt_systems/a
 
 Each generation also sends the source image as a visual reference. The server resizes it in memory to a maximum of 1536px, encodes it as JPEG, and uses the provider's automatic image-detail setting; the original file is never modified. The server logs the returned text, image, completion, and reasoning token counts after each request so API usage can be measured directly.
 
+### Prompt generation from ComfyUI
+
+The same prompt generation is available for images that are not in the library, through the ComfyUI custom node in [`comfyui/civitai_prompt_bridge/`](comfyui/civitai_prompt_bridge/). Copy that directory into ComfyUI's `custom_nodes` folder, connect the rendered image and its prompt to the node, and click its **Generate prompt** button; see the [node README](comfyui/civitai_prompt_bridge/README.md) for the details.
+
+It talks to `POST /api/comfy/generate-prompt`, which takes the image inline instead of an image ID:
+
+```bash
+curl -X POST http://localhost:8081/api/comfy/generate-prompt \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "prompt": "a cat sitting on a windowsill",
+    "image_base64": "<base64 JPEG or PNG, data URLs accepted>",
+    "target_model": "krea-2",
+    "concept": "next",
+    "steering": "two seconds later"
+  }'
+```
+
+The response is `{"prompt": "..."}`, or `{"error": "..."}` with a non-200 status. `image_base64` and `prompt` are both optional as long as one of them is provided, and the image goes through the same 1536px JPEG normalization as library images. This route is unauthenticated and meant for a trusted local network only.
+
 ### Civitai Import
 
 Import images and prompts directly from Civitai:

@@ -217,6 +217,7 @@ The application integrates with Civitai's REST API v1:
 - `/`: Main web interface with HTMX integration
 - `/api/images`: Paginated image listing (JSON/HTML hybrid)
 - `/search`: Search functionality across model and prompt fields
+- `/api/comfy/generate-prompt`: Prompt generation for images outside the library (base64 image + prompt in, rewritten prompt out), used by the ComfyUI node in `comfyui/civitai_prompt_bridge/`
 - `/images/*`: Static file serving for full-resolution images
 - `/thumbnails/*`: Static file serving for generated thumbnails
 

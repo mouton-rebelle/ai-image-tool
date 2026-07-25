@@ -319,6 +319,7 @@ func (app *App) setupRoutes(router *mux.Router) {
 	router.HandleFunc("/search", app.handleSearch).Methods("GET")
 	router.HandleFunc("/api/toggle-category", app.handleToggleCategory).Methods("POST")
 	router.HandleFunc("/api/generate-prompt", app.handleGeneratePrompt).Methods("POST")
+	router.HandleFunc("/api/comfy/generate-prompt", app.handleComfyGeneratePrompt).Methods("POST")
 }
 
 func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
