@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/zlib"
 	"testing"
 )
 
@@ -99,7 +101,7 @@ func TestJSONDetectionAndParsing(t *testing.T) {
 	t.Run("SwarmUI", func(t *testing.T) {
 		metadata := &ImageMetadata{}
 		app.parseGenerationParams(swarmUITestData, metadata)
-		
+
 		if metadata.Prompt == "" {
 			t.Error("Failed to parse Swarm UI prompt")
 		}
@@ -112,7 +114,7 @@ func TestJSONDetectionAndParsing(t *testing.T) {
 	t.Run("ComfyUI", func(t *testing.T) {
 		metadata := &ImageMetadata{}
 		app.parseGenerationParams(comfyUITestData, metadata)
-		
+
 		if metadata.Prompt == "" {
 			t.Error("Failed to parse ComfyUI prompt")
 		}
@@ -126,7 +128,7 @@ func TestJSONDetectionAndParsing(t *testing.T) {
 		metadata := &ImageMetadata{}
 		traditionalData := "masterpiece, best quality, 1girl\nNegative prompt: bad quality\nSteps: 20, CFG scale: 7, Sampler: DPM++ 2M, Seed: 12345"
 		app.parseGenerationParams(traditionalData, metadata)
-		
+
 		if metadata.Prompt != "masterpiece, best quality, 1girl" {
 			t.Errorf("Failed to parse traditional prompt: %s", metadata.Prompt)
 		}
@@ -134,4 +136,60 @@ func TestJSONDetectionAndParsing(t *testing.T) {
 			t.Errorf("Expected steps: 20, got: %d", metadata.Steps)
 		}
 	})
+}
+
+func TestDecodePNGiTextChunk(t *testing.T) {
+	const prompt = "A detailed café portrait\nSteps: 20, CFG scale: 5"
+
+	for _, compressed := range []bool{false, true} {
+		name := "uncompressed"
+		if compressed {
+			name = "compressed"
+		}
+
+		t.Run(name, func(t *testing.T) {
+			data := buildPNGiTextChunk(t, "parameters", prompt, compressed)
+			keyword, decoded, err := decodePNGiTextChunk(data)
+			if err != nil {
+				t.Fatalf("decode iTXt chunk: %v", err)
+			}
+			if keyword != "parameters" {
+				t.Fatalf("unexpected keyword %q", keyword)
+			}
+			if decoded != prompt {
+				t.Fatalf("unexpected text %q", decoded)
+			}
+			if bytes.ContainsRune([]byte(decoded), '\x00') {
+				t.Fatal("decoded text contains PNG iTXt control bytes")
+			}
+		})
+	}
+}
+
+func buildPNGiTextChunk(t *testing.T, keyword, text string, compressed bool) []byte {
+	t.Helper()
+
+	textBytes := []byte(text)
+	compressionFlag := byte(0)
+	if compressed {
+		compressionFlag = 1
+		var encoded bytes.Buffer
+		writer := zlib.NewWriter(&encoded)
+		if _, err := writer.Write(textBytes); err != nil {
+			t.Fatalf("compress iTXt text: %v", err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("finish iTXt compression: %v", err)
+		}
+		textBytes = encoded.Bytes()
+	}
+
+	data := append([]byte(keyword), 0)
+	data = append(data, compressionFlag, 0)
+	data = append(data, []byte("en")...)
+	data = append(data, 0)
+	data = append(data, []byte("Parameters")...)
+	data = append(data, 0)
+	data = append(data, textBytes...)
+	return data
 }

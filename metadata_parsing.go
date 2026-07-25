@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"regexp"
@@ -16,56 +18,56 @@ import (
 func extractLoRAs(text string) (string, []LoraData) {
 	// Regex to match LoRA patterns like <lora:name:weight>
 	loraRegex := regexp.MustCompile(`<lora:([^:]+):([^>]+)>`)
-	
+
 	var loras []LoraData
-	
+
 	// Find all LoRA matches
 	matches := loraRegex.FindAllStringSubmatch(text, -1)
 	for _, match := range matches {
 		if len(match) == 3 {
 			name := match[1]
 			weightStr := match[2]
-			
+
 			// Parse the weight as float
 			weight, err := strconv.ParseFloat(weightStr, 64)
 			if err != nil {
 				continue // Skip if can't parse weight
 			}
-			
+
 			// Round to 2 decimal places
 			roundedWeight := fmt.Sprintf("%.2f", weight)
 			finalWeight, _ := strconv.ParseFloat(roundedWeight, 64)
-			
+
 			loras = append(loras, LoraData{
 				Name:   name,
 				Weight: finalWeight,
 			})
 		}
 	}
-	
+
 	// Remove all LoRA tags from the text
 	cleanedText := loraRegex.ReplaceAllString(text, "")
-	
+
 	// Clean up extra spaces that might be left after removing LoRAs
 	cleanedText = regexp.MustCompile(`\s+`).ReplaceAllString(cleanedText, " ")
 	cleanedText = strings.TrimSpace(cleanedText)
-	
+
 	return cleanedText, loras
 }
 
 // SwarmUIParams represents Swarm UI parameter format
 type SwarmUIParams struct {
 	SUIImageParams struct {
-		Prompt       string  `json:"prompt"`
-		NegPrompt    string  `json:"negativeprompt"`
-		Model        string  `json:"model"`
-		Seed         int64   `json:"seed"`
-		Steps        int     `json:"steps"`
-		CFGScale     float64 `json:"cfgscale"`
-		Sampler      string  `json:"sampler"`
-		Scheduler    string  `json:"scheduler"`
-		Width        int     `json:"width"`
-		Height       int     `json:"height"`
+		Prompt    string  `json:"prompt"`
+		NegPrompt string  `json:"negativeprompt"`
+		Model     string  `json:"model"`
+		Seed      int64   `json:"seed"`
+		Steps     int     `json:"steps"`
+		CFGScale  float64 `json:"cfgscale"`
+		Sampler   string  `json:"sampler"`
+		Scheduler string  `json:"scheduler"`
+		Width     int     `json:"width"`
+		Height    int     `json:"height"`
 	} `json:"sui_image_params"`
 }
 
@@ -247,6 +249,8 @@ func (app *App) parseTraditionalParams(cleanText string, metadata *ImageMetadata
 }
 
 func (app *App) cleanUnicodeText(text string) string {
+	text = sanitizeUTF8(text)
+
 	// Remove "UNICODE" prefix if present
 	cleanText := strings.TrimPrefix(text, "UNICODE")
 	cleanText = strings.TrimSpace(cleanText)
@@ -392,21 +396,68 @@ func (app *App) processPNGzTextChunk(_ []byte, _ *ImageMetadata) {
 }
 
 func (app *App) processPNGiTextChunk(data []byte, metadata *ImageMetadata) {
-	// iTXt format is more complex with language tags, we'll extract what we can
-	nullIndex := bytes.IndexByte(data, 0)
-	if nullIndex == -1 {
+	keyword, text, err := decodePNGiTextChunk(data)
+	if err != nil {
+		log.Printf("Unable to decode PNG iTXt chunk: %v", err)
 		return
 	}
 
+	log.Printf("PNG iTXt chunk - %s: %s", keyword, text)
+	app.checkPNGTextForParams(keyword, text, metadata)
+}
+
+func decodePNGiTextChunk(data []byte) (string, string, error) {
+	// iTXt format:
+	// keyword\0 compression_flag compression_method
+	// language_tag\0 translated_keyword\0 text
+	nullIndex := bytes.IndexByte(data, 0)
+	if nullIndex == -1 {
+		return "", "", fmt.Errorf("missing keyword terminator")
+	}
+
 	keyword := string(data[:nullIndex])
-	// Skip compression flag, compression method, language tag, translated keyword
-	// and try to find the actual text
 	remaining := data[nullIndex+1:]
-	if len(remaining) > 0 {
-		// Simple extraction - this might need refinement
-		text := string(remaining)
-		log.Printf("PNG iTXt chunk - %s: %s", keyword, text)
-		app.checkPNGTextForParams(keyword, text, metadata)
+	if len(remaining) < 2 {
+		return "", "", fmt.Errorf("missing compression fields")
+	}
+
+	compressionFlag := remaining[0]
+	compressionMethod := remaining[1]
+	remaining = remaining[2:]
+
+	languageEnd := bytes.IndexByte(remaining, 0)
+	if languageEnd == -1 {
+		return "", "", fmt.Errorf("missing language tag terminator")
+	}
+	remaining = remaining[languageEnd+1:]
+
+	translatedKeywordEnd := bytes.IndexByte(remaining, 0)
+	if translatedKeywordEnd == -1 {
+		return "", "", fmt.Errorf("missing translated keyword terminator")
+	}
+	textBytes := remaining[translatedKeywordEnd+1:]
+
+	switch compressionFlag {
+	case 0:
+		return keyword, sanitizeUTF8(string(textBytes)), nil
+	case 1:
+		if compressionMethod != 0 {
+			return "", "", fmt.Errorf("unsupported compression method %d", compressionMethod)
+		}
+
+		reader, err := zlib.NewReader(bytes.NewReader(textBytes))
+		if err != nil {
+			return "", "", fmt.Errorf("open compressed text: %w", err)
+		}
+		defer reader.Close()
+
+		decoded, err := io.ReadAll(reader)
+		if err != nil {
+			return "", "", fmt.Errorf("read compressed text: %w", err)
+		}
+		return keyword, sanitizeUTF8(string(decoded)), nil
+	default:
+		return "", "", fmt.Errorf("invalid compression flag %d", compressionFlag)
 	}
 }
 
@@ -455,7 +506,7 @@ func (app *App) parseSwarmUIParams(jsonText string, metadata *ImageMetadata) boo
 		metadata.Seed = params.Seed
 	}
 
-	log.Printf("Successfully parsed Swarm UI parameters: prompt=%s, model=%s, steps=%d", 
+	log.Printf("Successfully parsed Swarm UI parameters: prompt=%s, model=%s, steps=%d",
 		metadata.Prompt[:min(50, len(metadata.Prompt))], metadata.Model, metadata.Steps)
 	return true
 }
@@ -505,11 +556,10 @@ func (app *App) parseComfyUIWorkflow(jsonText string, metadata *ImageMetadata) b
 		metadata.Seed = extraMeta.Seed
 	}
 
-	log.Printf("Successfully parsed ComfyUI workflow: prompt=%s, steps=%d", 
+	log.Printf("Successfully parsed ComfyUI workflow: prompt=%s, steps=%d",
 		metadata.Prompt[:min(50, len(metadata.Prompt))], metadata.Steps)
 	return true
 }
-
 
 func (app *App) checkPNGTextForParams(keyword, text string, metadata *ImageMetadata) {
 	// Check common keys used by AI image generators

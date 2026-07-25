@@ -420,6 +420,9 @@ body {
 }
 
 .clickable-prompt {
+    box-sizing: border-box;
+    max-height: 100px;
+    overflow-y: auto;
     cursor: pointer;
     transition:
         background-color 0.3s,

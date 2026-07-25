@@ -149,6 +149,10 @@ func (app *App) initDB() error {
 		}
 	}
 
+	if err := app.sanitizeStoredImagePrompts(); err != nil {
+		log.Printf("Warning: Failed to sanitize stored prompts: %v", err)
+	}
+
 	return nil
 }
 
@@ -194,6 +198,70 @@ func (app *App) clearImagesTables() error {
 	fmt.Printf("  Images: %d (cleared)\n", imageCount)
 	fmt.Printf("  LoRAs: %d (cleared)\n", loraCount)
 
+	return nil
+}
+
+func (app *App) sanitizeStoredImagePrompts() error {
+	type promptUpdate struct {
+		id        int
+		prompt    string
+		negPrompt string
+	}
+
+	rows, err := app.db.Query("SELECT id, prompt, neg_prompt FROM images")
+	if err != nil {
+		return err
+	}
+
+	var updates []promptUpdate
+	for rows.Next() {
+		var id int
+		var prompt, negPrompt sql.NullString
+		if err := rows.Scan(&id, &prompt, &negPrompt); err != nil {
+			rows.Close()
+			return err
+		}
+
+		cleanedPrompt := sanitizePromptForStorage(prompt.String)
+		cleanedNegPrompt := sanitizePromptForStorage(negPrompt.String)
+		if cleanedPrompt != prompt.String || cleanedNegPrompt != negPrompt.String {
+			updates = append(updates, promptUpdate{
+				id:        id,
+				prompt:    cleanedPrompt,
+				negPrompt: cleanedNegPrompt,
+			})
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tx, err := app.db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, update := range updates {
+		if _, err := tx.Exec(
+			"UPDATE images SET prompt = ?, neg_prompt = ? WHERE id = ?",
+			update.prompt,
+			update.negPrompt,
+			update.id,
+		); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	log.Printf("Sanitized prompts for %d existing images", len(updates))
 	return nil
 }
 
@@ -342,6 +410,9 @@ func (app *App) getOrCreateModel(hash string) (*Model, error) {
 }
 
 func (app *App) insertImageMetadata(metadata *ImageMetadata) error {
+	metadata.Prompt = sanitizePromptForStorage(metadata.Prompt)
+	metadata.NegPrompt = sanitizePromptForStorage(metadata.NegPrompt)
+
 	// Check if ID already exists and increment if needed
 	originalID := metadata.ID
 	for {

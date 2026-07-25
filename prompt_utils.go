@@ -47,38 +47,44 @@ var (
 	multiCommaRegex    = regexp.MustCompile(`\s*,\s*,[\s,]*`)
 	leadingCommaRegex  = regexp.MustCompile(`^\s*,\s*`)
 	trailingCommaRegex = regexp.MustCompile(`\s*,\s*$`)
-	multiSpaceRegex = regexp.MustCompile(`\s+`)
+	multiSpaceRegex    = regexp.MustCompile(`\s+`)
 )
 
-// sanitizeUTF8 ensures the string is valid UTF-8 by replacing invalid bytes
-// and converting common problematic characters (e.g. 0xa0 non-breaking space)
+// sanitizeUTF8 ensures the string is valid UTF-8, removes metadata control
+// bytes/replacement characters, and normalizes non-breaking spaces.
 func sanitizeUTF8(s string) string {
-	if utf8.ValidString(s) {
-		// Still replace non-breaking spaces (U+00A0) with regular spaces
-		return strings.ReplaceAll(s, "\u00a0", " ")
-	}
-	// Strip invalid UTF-8 sequences byte by byte
 	var b strings.Builder
 	b.Grow(len(s))
+
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		if r == utf8.RuneError && size <= 1 {
-			// Invalid byte — check if it's a known Latin-1 char we can salvage
 			if s[i] == 0xa0 {
 				b.WriteByte(' ')
 			}
-			// Otherwise skip the invalid byte
 			i++
 			continue
 		}
-		if r == '\u00a0' {
+
+		switch r {
+		case '\x00', utf8.RuneError:
+			// NUL bytes from malformed metadata and existing replacement
+			// characters should never be part of a generation prompt.
+		case '\u00a0':
 			b.WriteByte(' ')
-		} else {
+		default:
 			b.WriteRune(r)
 		}
 		i += size
 	}
+
 	return b.String()
+}
+
+func sanitizePromptForStorage(prompt string) string {
+	cleaned := strings.TrimSpace(sanitizeUTF8(prompt))
+	cleaned = leadingCommaRegex.ReplaceAllString(cleaned, "")
+	return strings.TrimSpace(cleaned)
 }
 
 // cleanPrompt removes LoRA tags, artist tags, quality/score tags, and excluded words from a prompt
@@ -93,7 +99,7 @@ func cleanPrompt(prompt string, excludedWords []string) string {
 	}
 
 	// Sanitize invalid UTF-8 before any regex processing
-	cleaned := sanitizeUTF8(prompt)
+	cleaned := sanitizePromptForStorage(prompt)
 
 	// Remove LoRA tags: <lora:name:weight>
 	cleaned = loraRegex.ReplaceAllString(cleaned, "")
@@ -165,7 +171,7 @@ func appendPromptToFile(prompt, negPrompt string, isNSFW bool, excludedWords []s
 // deduplicatePromptFiles removes duplicate entries from both prompt files
 func deduplicatePromptFiles() error {
 	files := []string{"prompts_sfw.txt", "prompts_nsfw.txt"}
-	
+
 	for _, filename := range files {
 		// Read file contents
 		file, err := os.Open(filename)
@@ -173,13 +179,13 @@ func deduplicatePromptFiles() error {
 			// File might not exist yet, which is fine
 			continue
 		}
-		
+
 		content, err := io.ReadAll(file)
 		file.Close()
 		if err != nil {
 			return fmt.Errorf("failed to read %s: %v", filename, err)
 		}
-		
+
 		// Sanitize content in case existing file has invalid UTF-8
 		sanitized := sanitizeUTF8(string(content))
 
@@ -187,7 +193,7 @@ func deduplicatePromptFiles() error {
 		lines := strings.Split(sanitized, "\n")
 		uniqueLines := make(map[string]bool)
 		var dedupedLines []string
-		
+
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line != "" && !uniqueLines[line] {
@@ -195,13 +201,13 @@ func deduplicatePromptFiles() error {
 				dedupedLines = append(dedupedLines, line)
 			}
 		}
-		
+
 		// Write back to file
 		outFile, err := os.Create(filename)
 		if err != nil {
 			return fmt.Errorf("failed to create %s: %v", filename, err)
 		}
-		
+
 		for _, line := range dedupedLines {
 			_, err := outFile.WriteString(line + "\n")
 			if err != nil {
@@ -209,10 +215,10 @@ func deduplicatePromptFiles() error {
 				return fmt.Errorf("failed to write to %s: %v", filename, err)
 			}
 		}
-		
+
 		outFile.Close()
 		fmt.Printf("Deduplicated %s: %d unique prompts\n", filename, len(dedupedLines))
 	}
-	
+
 	return nil
 }
