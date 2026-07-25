@@ -75,7 +75,7 @@ Non-secret import settings such as `CIVITAI_USERNAME` and `AUTO_IMPORT_ON_STARTU
 - Use the search bar to find images by prompt content
 - Filter by model or NSFW status. The NSFW filter is hidden behind a shortcut, CTRL+d.
 - Click images to view full size with metadata
-- From the image viewer, click **Gen prompt**, choose Anima or Krea 2, and the remixed prompt is copied to the clipboard when ready
+- From the image viewer, click **Gen prompt**, choose the Anima or Krea 2 output format, select Describe/Remix/Next/Before, and optionally steer the result before generating it
 
 ### Prompt generation
 
@@ -99,7 +99,7 @@ The available variables are:
 - `PROMPT_LLM_MODEL`: chat model; falls back to `XAI_MODEL`, then `grok-4.5`
 - `PROMPT_LLM_REASONING_EFFORT`: reasoning level; falls back to `XAI_REASONING_EFFORT`, then `medium`
 
-The model-specific system prompts live in [`prompt_systems/anima.md`](prompt_systems/anima.md) and [`prompt_systems/krea-2.md`](prompt_systems/krea-2.md). They are read for every generation request, so edits take effect immediately without recompiling or restarting the server.
+Prompt instructions are composed from two independent layers. [`prompt_systems/anima.md`](prompt_systems/anima.md) and [`prompt_systems/krea-2.md`](prompt_systems/krea-2.md) define the target model's output format, while [`prompt_systems/concepts/`](prompt_systems/concepts/) contains the Describe, Remix, Next, and Before creative operations. Optional steering from the form is sent separately as user direction. All instruction files are read for every generation request, so edits take effect immediately without recompiling or restarting the server.
 
 Each generation also sends the source image as a visual reference. The server resizes it in memory to a maximum of 1536px, encodes it as JPEG, and uses the provider's automatic image-detail setting; the original file is never modified. The server logs the returned text, image, completion, and reasoning token counts after each request so API usage can be measured directly.
 

@@ -11,13 +11,16 @@
     <div class="container">
         <div class="header">
             <h1>{{.Title}} <span class="image-count" id="image-count">({{.TotalCount}} images)</span></h1>
-            <form class="search-form" hx-get="/search" hx-target="#image-results" hx-trigger="submit, change from:select, keyup changed delay:500ms from:input[name='q']" hx-swap="innerHTML">
+            <form class="search-form" hx-get="/search" hx-target="#image-results" hx-trigger="submit, change from:select[name='model'], keyup changed delay:500ms from:input[name='q']" hx-swap="innerHTML">
                 <div class="search-inputs">
                     <input type="text" class="prompt-input" name="q" placeholder="Search prompts..." value="{{.SearchQuery}}">
                     <select class="model-select" name="model">
                         <option value="all">All Models</option>
                         {{range $model := .Models}}
                             <option value="{{$model.ID}}"{{if and (gt $.SelectedModelID 0) (eq $model.ID $.SelectedModelID)}} selected{{end}}>{{$model.Name}}{{if $model.VersionName}} - {{$model.VersionName}}{{end}} ({{$model.ImageCount}})</option>
+                        {{end}}
+                        {{if gt .OthersCount 0}}
+                            <option value="OTHERS"{{if .OthersSelected}} selected{{end}}>Others ({{.OthersCount}})</option>
                         {{end}}
                     </select>
                 </div>
@@ -30,9 +33,9 @@
             </form>
 
             <div class="filter-buttons">
-                <button class="filter-btn{{if eq .NSFWFilter "all"}} active{{end}}" onclick="setNSFWFilter('all')">All</button>
-                <button class="filter-btn{{if eq .NSFWFilter "sfw"}} active{{end}}" onclick="setNSFWFilter('sfw')">SFW Only</button>
-                <button class="filter-btn{{if eq .NSFWFilter "nsfw"}} active{{end}}" onclick="setNSFWFilter('nsfw')">NSFW Only</button>
+                <button type="button" data-nsfw-filter="all" class="filter-btn{{if eq .NSFWFilter "all"}} active{{end}}" onclick="setNSFWFilter('all')">All</button>
+                <button type="button" data-nsfw-filter="sfw" class="filter-btn{{if eq .NSFWFilter "sfw"}} active{{end}}" onclick="setNSFWFilter('sfw')">SFW Only</button>
+                <button type="button" data-nsfw-filter="nsfw" class="filter-btn{{if eq .NSFWFilter "nsfw"}} active{{end}}" onclick="setNSFWFilter('nsfw')">NSFW Only</button>
             </div>
         </div>
 
@@ -81,15 +84,39 @@
                 </div>
                 <div class="lightbox-actions">
                     <div class="prompt-generation-controls">
-                        <button id="generate-prompt-btn" class="generate-prompt-btn" type="button" onclick="togglePromptModelPicker()" aria-expanded="false" aria-controls="prompt-model-picker">
+                        <button id="generate-prompt-btn" class="generate-prompt-btn" type="button" onclick="togglePromptGenerationForm()" aria-expanded="false" aria-controls="prompt-remix-form">
                             <span id="generate-prompt-text">Gen prompt</span>
                             <span class="prompt-loader" aria-hidden="true"></span>
                         </button>
-                        <div id="prompt-model-picker" class="prompt-model-picker" hidden>
-                            <span>Remix for:</span>
-                            <button type="button" onclick="generatePrompt('anima', 'Anima')">Anima</button>
-                            <button type="button" onclick="generatePrompt('krea-2', 'Krea 2')">Krea 2</button>
-                        </div>
+                        <form id="prompt-remix-form" class="prompt-remix-form" onsubmit="submitPromptGeneration(event)" hidden>
+                            <div class="prompt-remix-grid">
+                                <label class="prompt-remix-field">
+                                    <span>Target</span>
+                                    <select id="prompt-target-model">
+                                        <option value="anima">Anima</option>
+                                        <option value="krea-2">Krea 2</option>
+                                    </select>
+                                </label>
+                                <label class="prompt-remix-field">
+                                    <span>Concept</span>
+                                    <select id="prompt-concept">
+                                        <option value="describe">Describe</option>
+                                        <option value="remix" selected>Remix</option>
+                                        <option value="next">Next</option>
+                                        <option value="before">Before</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <p id="prompt-concept-hint" class="prompt-concept-hint"></p>
+                            <label class="prompt-remix-field prompt-remix-steering">
+                                <span>Creative direction <small>optional</small></span>
+                                <textarea id="prompt-steering" maxlength="2000" rows="3" placeholder="e.g. Exactly two seconds later, at the instant she hits the water"></textarea>
+                            </label>
+                            <div class="prompt-remix-actions">
+                                <button class="prompt-remix-submit" type="submit">Generate</button>
+                                <button class="prompt-remix-cancel" type="button" onclick="closePromptGenerationForm()">Cancel</button>
+                            </div>
+                        </form>
                         <p id="prompt-generation-status" class="prompt-generation-status" aria-live="polite"></p>
                     </div>
                     <button id="category-toggle-btn" class="category-toggle-btn" onclick="toggleImageCategory()" title="Move to other category">
@@ -101,17 +128,73 @@
     </div>
 
     <script>
-    function setNSFWFilter(filter) {
+    window.modelStatsRequestVersion = 0;
+
+    window.refreshModelOptions = async function(filter, requestVersion) {
+        const modelSelect = document.querySelector('.model-select');
+        if (!modelSelect) return;
+
+        const selectedModel = modelSelect.value;
+
+        try {
+            const response = await fetch(`/api/models?nsfw=${encodeURIComponent(filter)}`);
+            if (!response.ok) {
+                throw new Error(`Model statistics request failed with status ${response.status}`);
+            }
+
+            const stats = await response.json();
+            if (requestVersion !== window.modelStatsRequestVersion) return;
+
+            const allModelsOption = document.createElement('option');
+            allModelsOption.value = 'all';
+            allModelsOption.textContent = 'All Models';
+            modelSelect.replaceChildren(allModelsOption);
+
+            stats.models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = String(model.id);
+                const version = model.version_name ? ` - ${model.version_name}` : '';
+                option.textContent = `${model.name}${version} (${model.image_count})`;
+                modelSelect.appendChild(option);
+            });
+
+            if (stats.others_count > 0) {
+                const othersOption = document.createElement('option');
+                othersOption.value = 'OTHERS';
+                othersOption.textContent = `Others (${stats.others_count})`;
+                modelSelect.appendChild(othersOption);
+            }
+
+            const selectedModelStillExists = Array.from(modelSelect.options)
+                .some(option => option.value === selectedModel);
+            modelSelect.value = selectedModelStillExists ? selectedModel : 'all';
+            window.currentModel = modelSelect.value;
+            updateClearButtonState();
+        } catch (error) {
+            console.error('Unable to refresh model statistics:', error);
+        }
+    };
+
+    async function setNSFWFilter(filter) {
         // Update hidden input
         document.getElementById('nsfw-filter').value = filter;
 
         // Update active button
         document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
-        event.target.classList.add('active');
+        const activeButton = document.querySelector(`[data-nsfw-filter="${filter}"]`);
+        if (activeButton) {
+            activeButton.classList.add('active');
+        }
 
         // Update current search parameters and reset page
         window.currentNSFWFilter = filter;
         window.currentPage = 1; // Reset to page 1
+        const requestVersion = ++window.modelStatsRequestVersion;
+
+        // Refresh model counts and drop a model selection that is unavailable
+        // in the newly selected category before loading the image grid.
+        await window.refreshModelOptions(filter, requestVersion);
+        if (requestVersion !== window.modelStatsRequestVersion) return;
 
         // Trigger search with new filter
         const promptInput = document.querySelector('.prompt-input');
@@ -229,7 +312,7 @@
 
     // Initialize filter state (will be updated from form values)
     window.currentNSFWFilter = '{{.NSFWFilter}}';
-    window.currentModel = '{{if gt .SelectedModelID 0}}{{.SelectedModelID}}{{else}}all{{end}}';
+    window.currentModel = '{{if .OthersSelected}}OTHERS{{else if gt .SelectedModelID 0}}{{.SelectedModelID}}{{else}}all{{end}}';
     window.currentSearch = '{{.SearchQuery}}';
 
     // Function to update URL with current search parameters
@@ -683,7 +766,7 @@
     window.resetPromptGenerationControls = function() {
         const button = document.getElementById('generate-prompt-btn');
         const buttonText = document.getElementById('generate-prompt-text');
-        const picker = document.getElementById('prompt-model-picker');
+        const form = document.getElementById('prompt-remix-form');
         const status = document.getElementById('prompt-generation-status');
 
         window.stopPromptGenerationTimer();
@@ -691,7 +774,7 @@
         button.classList.remove('is-loading', 'is-success', 'is-error', 'is-ready');
         button.setAttribute('aria-expanded', 'false');
         buttonText.textContent = 'Gen prompt';
-        picker.hidden = true;
+        form.hidden = true;
         status.textContent = '';
         status.className = 'prompt-generation-status';
         window.promptGenerationInProgress = false;
@@ -700,7 +783,74 @@
         window.pendingGeneratedPromptName = '';
     };
 
-    window.togglePromptModelPicker = function() {
+    window.promptConceptHints = {
+        describe: 'Faithfully reconstruct the image as a standalone prompt.',
+        remix: 'Reinterpret the idea while preserving its core subject and mood.',
+        next: 'Imagine one meaningful scene that happens afterward.',
+        before: 'Imagine one plausible scene that led to this moment.'
+    };
+
+    window.updatePromptConceptHint = function() {
+        const concept = document.getElementById('prompt-concept').value;
+        const hint = document.getElementById('prompt-concept-hint');
+        const steering = document.getElementById('prompt-steering');
+        hint.textContent = window.promptConceptHints[concept] || '';
+
+        if (concept === 'next') {
+            steering.placeholder = 'e.g. Exactly two seconds later, at the instant she hits the water';
+        } else if (concept === 'before') {
+            steering.placeholder = 'e.g. Three years earlier, before the building was abandoned';
+        } else if (concept === 'describe') {
+            steering.placeholder = 'e.g. Emphasize the precise clothing and camera position';
+        } else {
+            steering.placeholder = 'e.g. Make the interaction more intimate and move it indoors';
+        }
+    };
+
+    window.initializePromptGenerationForm = function() {
+        const targetModel = document.getElementById('prompt-target-model');
+        const concept = document.getElementById('prompt-concept');
+
+        try {
+            const savedTarget = localStorage.getItem('promptTargetModel');
+            const savedConcept = localStorage.getItem('promptConcept');
+            if (savedTarget && Array.from(targetModel.options).some(option => option.value === savedTarget)) {
+                targetModel.value = savedTarget;
+            }
+            if (savedConcept && Array.from(concept.options).some(option => option.value === savedConcept)) {
+                concept.value = savedConcept;
+            }
+        } catch (error) {
+            console.warn('Unable to restore prompt form preferences:', error);
+        }
+
+        targetModel.addEventListener('change', function() {
+            try {
+                localStorage.setItem('promptTargetModel', targetModel.value);
+            } catch (error) {
+                console.warn('Unable to save target model preference:', error);
+            }
+        });
+        concept.addEventListener('change', function() {
+            window.updatePromptConceptHint();
+            try {
+                localStorage.setItem('promptConcept', concept.value);
+            } catch (error) {
+                console.warn('Unable to save prompt concept preference:', error);
+            }
+        });
+
+        window.updatePromptConceptHint();
+    };
+
+    window.closePromptGenerationForm = function() {
+        const button = document.getElementById('generate-prompt-btn');
+        const form = document.getElementById('prompt-remix-form');
+        form.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+    };
+
+    window.togglePromptGenerationForm = function() {
         if (window.promptGenerationInProgress) return;
 
         if (window.pendingGeneratedPrompt) {
@@ -710,7 +860,7 @@
 
         const button = document.getElementById('generate-prompt-btn');
         const buttonText = document.getElementById('generate-prompt-text');
-        const picker = document.getElementById('prompt-model-picker');
+        const form = document.getElementById('prompt-remix-form');
         const status = document.getElementById('prompt-generation-status');
         if (button.classList.contains('is-success') || button.classList.contains('is-error')) {
             button.classList.remove('is-success', 'is-error');
@@ -718,8 +868,11 @@
             status.textContent = '';
             status.className = 'prompt-generation-status';
         }
-        picker.hidden = !picker.hidden;
-        button.setAttribute('aria-expanded', String(!picker.hidden));
+        form.hidden = !form.hidden;
+        button.setAttribute('aria-expanded', String(!form.hidden));
+        if (!form.hidden) {
+            document.getElementById('prompt-steering').focus();
+        }
     };
 
     window.copyReadyPrompt = async function() {
@@ -750,36 +903,53 @@
         }
     };
 
-    window.generatePrompt = async function(targetModel, targetModelName) {
+    window.submitPromptGeneration = function(event) {
+        event.preventDefault();
+        window.generatePrompt();
+    };
+
+    window.buildPromptGenerationRequest = function(imageID) {
+        return {
+            image_id: Number(imageID),
+            target_model: document.getElementById('prompt-target-model').value,
+            concept: document.getElementById('prompt-concept').value,
+            steering: document.getElementById('prompt-steering').value.trim()
+        };
+    };
+
+    window.generatePrompt = async function() {
         const currentImageData = window.lightboxMetadata[window.currentLightboxIndex];
         if (!currentImageData?.id || window.promptGenerationInProgress) return;
 
         const button = document.getElementById('generate-prompt-btn');
         const buttonText = document.getElementById('generate-prompt-text');
-        const picker = document.getElementById('prompt-model-picker');
+        const form = document.getElementById('prompt-remix-form');
         const status = document.getElementById('prompt-generation-status');
+        const targetModelSelect = document.getElementById('prompt-target-model');
+        const conceptSelect = document.getElementById('prompt-concept');
+        const requestPayload = window.buildPromptGenerationRequest(currentImageData.id);
+        const targetModelName = targetModelSelect.options[targetModelSelect.selectedIndex].textContent;
+        const conceptName = conceptSelect.options[conceptSelect.selectedIndex].textContent;
+        const generationName = `${targetModelName} · ${conceptName}`;
 
         const requestID = ++window.promptGenerationRequestID;
         window.promptGenerationInProgress = true;
         window.pendingGeneratedPrompt = null;
         window.pendingGeneratedPromptName = '';
-        picker.hidden = true;
+        form.hidden = true;
         button.setAttribute('aria-expanded', 'false');
         button.disabled = true;
         button.classList.remove('is-success', 'is-error', 'is-ready');
         button.classList.add('is-loading');
-        status.textContent = 'Remixing prompt…';
+        status.textContent = `Generating ${conceptName.toLowerCase()} prompt…`;
         status.className = 'prompt-generation-status';
-        window.startPromptGenerationTimer(requestID, targetModelName);
+        window.startPromptGenerationTimer(requestID, generationName);
 
         try {
             const response = await fetch('/api/generate-prompt', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    image_id: Number(currentImageData.id),
-                    target_model: targetModel
-                })
+                body: JSON.stringify(requestPayload)
             });
             const data = await response.json();
             if (!response.ok) {
@@ -792,7 +962,7 @@
 
             window.stopPromptGenerationTimer();
             window.pendingGeneratedPrompt = data.prompt;
-            window.pendingGeneratedPromptName = targetModelName;
+            window.pendingGeneratedPromptName = generationName;
             button.classList.remove('is-loading');
             button.classList.add('is-ready');
             buttonText.textContent = 'Prompt ready — click to copy';
@@ -816,6 +986,8 @@
             }
         }
     };
+
+    window.initializePromptGenerationForm();
 
     window.toggleImageCategory = function() {
         const currentImageData = window.lightboxMetadata[window.currentLightboxIndex];

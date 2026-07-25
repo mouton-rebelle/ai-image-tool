@@ -410,7 +410,12 @@ func (app *App) insertLoraData(imageID int, loras []LoraData) error {
 	return nil
 }
 
-func (app *App) getModelStats() ([]ModelStat, error) {
+func (app *App) getModelStats(nsfwFilter string) ([]ModelStat, int, error) {
+	whereClause := ""
+	if condition := nsfwFilterCondition(nsfwFilter); condition != "" {
+		whereClause = "WHERE " + condition
+	}
+
 	query := `
 		SELECT
 			m.id,
@@ -422,27 +427,36 @@ func (app *App) getModelStats() ([]ModelStat, error) {
 			COALESCE(m.version_name, '') as version_name,
 			COUNT(i.id) as image_count
 		FROM models m
-		LEFT JOIN images i ON m.id = i.model_id
+		INNER JOIN images i ON m.id = i.model_id
+		` + whereClause + `
 		GROUP BY m.id, m.name, m.version_name
-		HAVING image_count > 0
 		ORDER BY image_count DESC, model_name ASC
 	`
 
 	rows, err := app.db.Query(query)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
-	var models []ModelStat
+	models := make([]ModelStat, 0)
+	othersCount := 0
 	for rows.Next() {
 		var model ModelStat
 		err := rows.Scan(&model.ID, &model.Name, &model.VersionName, &model.ImageCount)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
+		}
+		if model.ImageCount < 3 {
+			othersCount += model.ImageCount
+			continue
 		}
 		models = append(models, model)
 	}
 
-	return models, nil
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return models, othersCount, nil
 }

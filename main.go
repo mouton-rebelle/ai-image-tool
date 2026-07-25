@@ -104,8 +104,10 @@ type PageData struct {
 	SearchQuery     string
 	NSFWFilter      string
 	Models          []ModelStat
+	OthersCount     int
 	InitialURL      string
 	SelectedModelID int
+	OthersSelected  bool
 }
 
 type ImageGridData struct {
@@ -131,6 +133,11 @@ type App struct {
 	templates          *template.Template
 	promptGenerator    PromptGenerator
 	promptImageBaseDir string
+}
+
+type ModelStatsResponse struct {
+	Models      []ModelStat `json:"models"`
+	OthersCount int         `json:"others_count"`
 }
 
 func main() {
@@ -308,6 +315,7 @@ func (app *App) setupRoutes(router *mux.Router) {
 	// API routes
 	router.HandleFunc("/", app.handleIndex).Methods("GET")
 	router.HandleFunc("/api/images", app.handleAPIImages).Methods("GET")
+	router.HandleFunc("/api/models", app.handleModelStats).Methods("GET")
 	router.HandleFunc("/search", app.handleSearch).Methods("GET")
 	router.HandleFunc("/api/toggle-category", app.handleToggleCategory).Methods("POST")
 	router.HandleFunc("/api/generate-prompt", app.handleGeneratePrompt).Methods("POST")
@@ -321,7 +329,8 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	// Parse selected model ID
 	var selectedModelID int
-	if modelFilter != "" && modelFilter != "all" {
+	othersSelected := strings.EqualFold(modelFilter, "OTHERS")
+	if modelFilter != "" && modelFilter != "all" && !othersSelected {
 		if parsed, err := strconv.Atoi(modelFilter); err == nil {
 			selectedModelID = parsed
 		}
@@ -339,15 +348,13 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	// Build count query with filters
 	whereClause := "WHERE 1=1"
-	if nsfwFilter == "sfw" {
-		whereClause += " AND i.is_nsfw = 0"
-	} else if nsfwFilter == "nsfw" {
-		whereClause += " AND i.is_nsfw = 1"
+	if condition := nsfwFilterCondition(nsfwFilter); condition != "" {
+		whereClause += " AND " + condition
 	}
 
-	if modelFilter != "" && modelFilter != "all" {
-		whereClause += " AND i.model_id = ?"
-		args = append(args, modelFilter)
+	if condition, modelArgs := modelFilterCondition(modelFilter, nsfwFilter); condition != "" {
+		whereClause += " AND " + condition
+		args = append(args, modelArgs...)
 	}
 
 	if promptQuery != "" {
@@ -373,10 +380,11 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get model statistics
-	models, err := app.getModelStats()
+	models, othersCount, err := app.getModelStats(nsfwFilter)
 	if err != nil {
 		log.Printf("Error getting model stats: %v", err)
 		models = []ModelStat{}
+		othersCount = 0
 	}
 
 	// Build initial URL for HTMX request
@@ -402,8 +410,10 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		SearchQuery:     promptQuery,
 		NSFWFilter:      nsfwFilter,
 		Models:          models,
+		OthersCount:     othersCount,
 		InitialURL:      initialURL,
 		SelectedModelID: selectedModelID,
+		OthersSelected:  othersSelected,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -441,6 +451,44 @@ func parseImageSearchParams(r *http.Request) ImageSearchParams {
 	return params
 }
 
+func nsfwFilterConditionForAlias(filter, alias string) string {
+	switch filter {
+	case "sfw":
+		return alias + ".is_nsfw = 0"
+	case "nsfw":
+		return alias + ".is_nsfw = 1"
+	default:
+		return ""
+	}
+}
+
+func nsfwFilterCondition(filter string) string {
+	return nsfwFilterConditionForAlias(filter, "i")
+}
+
+func modelFilterCondition(modelFilter, nsfwFilter string) (string, []any) {
+	if modelFilter == "" || modelFilter == "all" {
+		return "", nil
+	}
+
+	if strings.EqualFold(modelFilter, "OTHERS") {
+		statsConditions := []string{"model_stats.model_id IS NOT NULL"}
+		if condition := nsfwFilterConditionForAlias(nsfwFilter, "model_stats"); condition != "" {
+			statsConditions = append(statsConditions, condition)
+		}
+
+		return `i.model_id IN (
+			SELECT model_stats.model_id
+			FROM images model_stats
+			WHERE ` + strings.Join(statsConditions, " AND ") + `
+			GROUP BY model_stats.model_id
+			HAVING COUNT(*) < 3
+		)`, nil
+	}
+
+	return "i.model_id = ?", []any{modelFilter}
+}
+
 // queryImages performs the unified image search with given parameters
 func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, error) {
 	offset := (params.Page - 1) * params.Limit
@@ -450,16 +498,14 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 	var args []interface{}
 
 	// NSFW filter
-	if params.NSFWFilter == "sfw" {
-		whereConditions = append(whereConditions, "i.is_nsfw = 0")
-	} else if params.NSFWFilter == "nsfw" {
-		whereConditions = append(whereConditions, "i.is_nsfw = 1")
+	if condition := nsfwFilterCondition(params.NSFWFilter); condition != "" {
+		whereConditions = append(whereConditions, condition)
 	}
 
 	// Model filter
-	if params.ModelFilter != "" && params.ModelFilter != "all" {
-		whereConditions = append(whereConditions, "i.model_id = ?")
-		args = append(args, params.ModelFilter)
+	if condition, modelArgs := modelFilterCondition(params.ModelFilter, params.NSFWFilter); condition != "" {
+		whereConditions = append(whereConditions, condition)
+		args = append(args, modelArgs...)
 	}
 
 	// Prompt search (only positive prompts)
@@ -592,6 +638,20 @@ func (app *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	app.renderImageGrid(w, images, params.Page, total, params.Limit, params.PromptQuery)
+}
+
+func (app *App) handleModelStats(w http.ResponseWriter, r *http.Request) {
+	models, othersCount, err := app.getModelStats(r.URL.Query().Get("nsfw"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	response := ModelStatsResponse{Models: models, OthersCount: othersCount}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding model stats: %v", err)
+	}
 }
 
 func (app *App) renderImageGrid(w http.ResponseWriter, images []ImageMetadata, page, total, limit int, searchQuery string) {

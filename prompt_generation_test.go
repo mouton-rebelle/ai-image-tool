@@ -123,9 +123,77 @@ func TestPromptChatMessagesWithoutImageUsesPlainText(t *testing.T) {
 	messages := promptChatMessages(PromptGenerationInput{
 		SystemPrompt: "system",
 		SourcePrompt: "source",
+		Steering:     "three years later",
 	})
-	if len(messages) != 2 || messages[1].Content != "source" {
+	if len(messages) != 2 {
 		t.Fatalf("unexpected text-only messages: %#v", messages)
+	}
+	userMessage, ok := messages[1].Content.(string)
+	if !ok || !strings.Contains(userMessage, "Source prompt:\nsource") ||
+		!strings.Contains(userMessage, "User creative direction:\nthree years later") {
+		t.Fatalf("unexpected text-only user message: %#v", messages[1].Content)
+	}
+}
+
+func TestPromptProfiles(t *testing.T) {
+	models := []struct {
+		id   string
+		name string
+	}{
+		{id: "anima", name: "Anima"},
+		{id: "krea-2", name: "Krea 2"},
+	}
+	concepts := []string{"describe", "remix", "next", "before"}
+
+	for _, model := range models {
+		for _, concept := range concepts {
+			testName := model.id + "/" + concept
+			t.Run(testName, func(t *testing.T) {
+				profile, ok, err := getPromptProfile(model.id, concept)
+				if err != nil {
+					t.Fatalf("getPromptProfile(%q, %q): %v", model.id, concept, err)
+				}
+				if !ok {
+					t.Fatalf("profile %q was not found", testName)
+				}
+				if profile.ID != model.id+":"+concept || profile.TargetModel != model.id || profile.Concept != concept {
+					t.Errorf("unexpected profile metadata: %#v", profile)
+				}
+				if !strings.Contains(profile.Name, model.name) || !strings.Contains(profile.SystemPrompt, model.name) {
+					t.Errorf("profile does not reference target model %q", model.name)
+				}
+				if !strings.Contains(strings.ToLower(profile.SystemPrompt), "creative operation — "+concept) {
+					t.Errorf("profile does not include the %q operation", concept)
+				}
+				if concept != "next" && concept != "before" {
+					return
+				}
+				lowerPrompt := strings.ToLower(profile.SystemPrompt)
+				for _, instruction := range []string{
+					"mandatory two-pass process",
+					"cold-start reconstruction",
+					"blank canvas",
+					"never the transition",
+					"cold-start test before output",
+				} {
+					if !strings.Contains(lowerPrompt, instruction) {
+						t.Errorf("Next profile is missing standalone reconstruction instruction %q", instruction)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPromptProfilesSupportLegacyNextIDs(t *testing.T) {
+	for _, legacyID := range []string{"anima-next", "krea-2-next"} {
+		profile, ok, err := getPromptProfile(legacyID, "")
+		if err != nil || !ok {
+			t.Fatalf("getPromptProfile(%q): ok=%v err=%v", legacyID, ok, err)
+		}
+		if profile.Concept != "next" {
+			t.Errorf("legacy profile %q selected concept %q", legacyID, profile.Concept)
+		}
 	}
 }
 
@@ -188,7 +256,9 @@ func TestHandleGeneratePrompt(t *testing.T) {
 
 	generator := &recordingPromptGenerator{}
 	app := &App{db: db, promptGenerator: generator, promptImageBaseDir: imageBaseDir}
-	req := httptest.NewRequest(http.MethodPost, "/api/generate-prompt", strings.NewReader(`{"image_id":42,"target_model":"anima"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/generate-prompt", strings.NewReader(
+		`{"image_id":42,"target_model":"anima","concept":"next","steering":"Exactly two seconds later"}`,
+	))
 	recorder := httptest.NewRecorder()
 
 	app.handleGeneratePrompt(recorder, req)
@@ -199,8 +269,12 @@ func TestHandleGeneratePrompt(t *testing.T) {
 	if generator.input.SourcePrompt != "original prompt" {
 		t.Errorf("unexpected source prompt: %q", generator.input.SourcePrompt)
 	}
-	if !strings.Contains(generator.input.SystemPrompt, "Anima") {
-		t.Errorf("Anima profile was not selected: %q", generator.input.SystemPrompt)
+	if generator.input.Steering != "Exactly two seconds later" {
+		t.Errorf("unexpected creative direction: %q", generator.input.Steering)
+	}
+	if !strings.Contains(generator.input.SystemPrompt, "Anima") ||
+		!strings.Contains(strings.ToLower(generator.input.SystemPrompt), "creative operation — next") {
+		t.Errorf("Anima Next profile was not selected: %q", generator.input.SystemPrompt)
 	}
 	if generator.input.Image == nil || generator.input.Image.MediaType != "image/jpeg" || generator.input.Image.Detail != "auto" {
 		t.Fatalf("unexpected prompt image: %#v", generator.input.Image)
@@ -275,6 +349,41 @@ func TestPromptImagePathRejectsNestedFilename(t *testing.T) {
 func TestHandleGeneratePromptRejectsUnknownProfile(t *testing.T) {
 	app := &App{promptGenerator: &recordingPromptGenerator{}}
 	req := httptest.NewRequest(http.MethodPost, "/api/generate-prompt", strings.NewReader(`{"image_id":42,"target_model":"other"}`))
+	recorder := httptest.NewRecorder()
+
+	app.handleGeneratePrompt(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestHandleGeneratePromptRejectsUnknownConcept(t *testing.T) {
+	app := &App{promptGenerator: &recordingPromptGenerator{}}
+	req := httptest.NewRequest(http.MethodPost, "/api/generate-prompt", strings.NewReader(
+		`{"image_id":42,"target_model":"anima","concept":"unknown"}`,
+	))
+	recorder := httptest.NewRecorder()
+
+	app.handleGeneratePrompt(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestHandleGeneratePromptRejectsLongSteering(t *testing.T) {
+	app := &App{promptGenerator: &recordingPromptGenerator{}}
+	requestBody, err := json.Marshal(generatePromptRequest{
+		ImageID:     42,
+		TargetModel: "anima",
+		Concept:     "next",
+		Steering:    strings.Repeat("a", maxPromptSteeringCharacters+1),
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/generate-prompt", bytes.NewReader(requestBody))
 	recorder := httptest.NewRecorder()
 
 	app.handleGeneratePrompt(recorder, req)

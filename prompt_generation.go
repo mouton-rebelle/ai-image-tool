@@ -20,8 +20,9 @@ const (
 	defaultPromptLLMBaseURL      = "https://api.x.ai/v1"
 	defaultPromptLLMModel        = "grok-4.5"
 	defaultPromptReasoningEffort = "medium"
-	maxPromptRequestBytes        = 4 << 10
+	maxPromptRequestBytes        = 8 << 10
 	maxPromptResponseBytes       = 2 << 20
+	maxPromptSteeringCharacters  = 2000
 	promptLLMRequestTimeout      = 6 * time.Minute
 )
 
@@ -35,12 +36,15 @@ type PromptGenerator interface {
 type PromptGenerationInput struct {
 	SystemPrompt string
 	SourcePrompt string
+	Steering     string
 	Image        *PromptImage
 }
 
 type PromptProfile struct {
 	ID           string
 	Name         string
+	TargetModel  string
+	Concept      string
 	SystemPrompt string
 }
 
@@ -49,7 +53,7 @@ type promptProfileDefinition struct {
 	SystemPromptPath string
 }
 
-var promptProfileDefinitions = map[string]promptProfileDefinition{
+var promptModelDefinitions = map[string]promptProfileDefinition{
 	"anima": {
 		Name:             "Anima",
 		SystemPromptPath: "prompt_systems/anima.md",
@@ -60,25 +64,88 @@ var promptProfileDefinitions = map[string]promptProfileDefinition{
 	},
 }
 
-func getPromptProfile(id string) (PromptProfile, bool, error) {
-	definition, ok := promptProfileDefinitions[id]
+var promptConceptDefinitions = map[string]promptProfileDefinition{
+	"describe": {
+		Name:             "Describe",
+		SystemPromptPath: "prompt_systems/concepts/describe.md",
+	},
+	"remix": {
+		Name:             "Remix",
+		SystemPromptPath: "prompt_systems/concepts/remix.md",
+	},
+	"next": {
+		Name:             "Next",
+		SystemPromptPath: "prompt_systems/concepts/next.md",
+	},
+	"before": {
+		Name:             "Before",
+		SystemPromptPath: "prompt_systems/concepts/before.md",
+	},
+}
+
+func normalizePromptSelection(targetModel, concept string) (string, string) {
+	targetModel = strings.TrimSpace(targetModel)
+	concept = strings.TrimSpace(concept)
+
+	switch targetModel {
+	case "anima-next":
+		targetModel = "anima"
+		if concept == "" {
+			concept = "next"
+		}
+	case "krea-2-next":
+		targetModel = "krea-2"
+		if concept == "" {
+			concept = "next"
+		}
+	}
+
+	if concept == "" {
+		concept = "remix"
+	}
+
+	return targetModel, concept
+}
+
+func readPromptInstructions(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read system prompt %s: %w", path, err)
+	}
+	instructions := strings.TrimSpace(string(content))
+	if instructions == "" {
+		return "", fmt.Errorf("system prompt %s is empty", path)
+	}
+	return instructions, nil
+}
+
+func getPromptProfile(targetModel, concept string) (PromptProfile, bool, error) {
+	targetModel, concept = normalizePromptSelection(targetModel, concept)
+
+	modelDefinition, ok := promptModelDefinitions[targetModel]
+	if !ok {
+		return PromptProfile{}, false, nil
+	}
+	conceptDefinition, ok := promptConceptDefinitions[concept]
 	if !ok {
 		return PromptProfile{}, false, nil
 	}
 
-	content, err := os.ReadFile(definition.SystemPromptPath)
+	modelInstructions, err := readPromptInstructions(modelDefinition.SystemPromptPath)
 	if err != nil {
-		return PromptProfile{}, true, fmt.Errorf("read system prompt %s: %w", definition.SystemPromptPath, err)
+		return PromptProfile{}, true, err
 	}
-	systemPrompt := strings.TrimSpace(string(content))
-	if systemPrompt == "" {
-		return PromptProfile{}, true, fmt.Errorf("system prompt %s is empty", definition.SystemPromptPath)
+	conceptInstructions, err := readPromptInstructions(conceptDefinition.SystemPromptPath)
+	if err != nil {
+		return PromptProfile{}, true, err
 	}
 
 	return PromptProfile{
-		ID:           id,
-		Name:         definition.Name,
-		SystemPrompt: systemPrompt,
+		ID:           targetModel + ":" + concept,
+		Name:         modelDefinition.Name + " · " + conceptDefinition.Name,
+		TargetModel:  targetModel,
+		Concept:      concept,
+		SystemPrompt: modelInstructions + "\n\nCreative operation — " + conceptDefinition.Name + ":\n\n" + conceptInstructions,
 	}, true, nil
 }
 
@@ -257,8 +324,9 @@ func promptChatMessages(input PromptGenerationInput) []chatCompletionRequestMess
 	messages := []chatCompletionRequestMessage{
 		{Role: "system", Content: input.SystemPrompt},
 	}
+	userText := promptGenerationUserText(input.SourcePrompt, input.Steering)
 	if input.Image == nil {
-		return append(messages, chatCompletionRequestMessage{Role: "user", Content: input.SourcePrompt})
+		return append(messages, chatCompletionRequestMessage{Role: "user", Content: userText})
 	}
 
 	mediaType := strings.TrimSpace(input.Image.MediaType)
@@ -281,11 +349,19 @@ func promptChatMessages(input PromptGenerationInput) []chatCompletionRequestMess
 		{
 			Type: "text",
 			Text: "Use the attached image as the visual reference and the following source prompt as semantic guidance. " +
-				"Rewrite the prompt according to the system instructions.\n\n" + input.SourcePrompt,
+				"Produce the requested prompt according to the system instructions.\n\n" + userText,
 		},
 	}
 
 	return append(messages, chatCompletionRequestMessage{Role: "user", Content: content})
+}
+
+func promptGenerationUserText(sourcePrompt, steering string) string {
+	text := "Source prompt:\n" + strings.TrimSpace(sourcePrompt)
+	if steering = strings.TrimSpace(steering); steering != "" {
+		text += "\n\nUser creative direction:\n" + steering
+	}
+	return text
 }
 
 func chatCompletionErrorMessage(raw json.RawMessage) string {
@@ -311,6 +387,8 @@ func chatCompletionErrorMessage(raw json.RawMessage) string {
 type generatePromptRequest struct {
 	ImageID     int    `json:"image_id"`
 	TargetModel string `json:"target_model"`
+	Concept     string `json:"concept"`
+	Steering    string `json:"steering"`
 }
 
 type generatePromptResponse struct {
@@ -340,15 +418,20 @@ func (app *App) handleGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 		writeGeneratePromptJSON(w, http.StatusBadRequest, generatePromptResponse{Error: "A valid image ID is required"})
 		return
 	}
+	request.Steering = strings.TrimSpace(request.Steering)
+	if len([]rune(request.Steering)) > maxPromptSteeringCharacters {
+		writeGeneratePromptJSON(w, http.StatusBadRequest, generatePromptResponse{Error: "Creative direction is too long"})
+		return
+	}
 
-	profile, ok, err := getPromptProfile(request.TargetModel)
+	profile, ok, err := getPromptProfile(request.TargetModel, request.Concept)
 	if !ok {
-		writeGeneratePromptJSON(w, http.StatusBadRequest, generatePromptResponse{Error: "Unknown target model"})
+		writeGeneratePromptJSON(w, http.StatusBadRequest, generatePromptResponse{Error: "Unknown target model or concept"})
 		return
 	}
 	if err != nil {
-		log.Printf("Failed to load prompt profile %s: %v", request.TargetModel, err)
-		writeGeneratePromptJSON(w, http.StatusInternalServerError, generatePromptResponse{Error: "The target model prompt could not be loaded"})
+		log.Printf("Failed to load prompt profile %s/%s: %v", request.TargetModel, request.Concept, err)
+		writeGeneratePromptJSON(w, http.StatusInternalServerError, generatePromptResponse{Error: "The prompt profile could not be loaded"})
 		return
 	}
 
@@ -383,6 +466,7 @@ func (app *App) handleGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 	generatedPrompt, err := app.promptGenerator.Generate(r.Context(), PromptGenerationInput{
 		SystemPrompt: profile.SystemPrompt,
 		SourcePrompt: sourcePrompt,
+		Steering:     request.Steering,
 		Image:        promptImage,
 	})
 	if err != nil {
