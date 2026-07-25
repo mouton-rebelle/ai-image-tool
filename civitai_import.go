@@ -204,6 +204,16 @@ func (app *App) importFromCivitai() error {
 		for i, img := range images {
 			fmt.Printf("Processing image %d/%d: %d\n", i+1, len(images), img.ID)
 
+			blacklisted, err := app.isCivitaiImageBlacklisted(img.ID)
+			if err != nil {
+				return fmt.Errorf("check deletion blacklist for image %d: %v", img.ID, err)
+			}
+			if blacklisted {
+				fmt.Printf("  Skipped image %d (previously deleted)\n", img.ID)
+				updateTimestampMapping(timestampMapping, img)
+				continue
+			}
+
 			// Download image
 			downloaded, err := app.downloadImage(img)
 			if err != nil {
@@ -303,6 +313,14 @@ func (app *App) fetchCivitaiImages(config *ImportConfig, nextPage string) ([]Civ
 
 // downloadImage downloads an image if it doesn't already exist
 func (app *App) downloadImage(img CivitaiImage) (bool, error) {
+	blacklisted, err := app.isCivitaiImageBlacklisted(img.ID)
+	if err != nil {
+		return false, fmt.Errorf("check deletion blacklist: %v", err)
+	}
+	if blacklisted {
+		return false, nil
+	}
+
 	// Determine file extension from URL
 	ext := filepath.Ext(img.URL)
 	if ext == "" {
@@ -441,6 +459,16 @@ func (app *App) checkForNewCivitaiImages() error {
 
 		// Always update timestamp mapping for this image (even if already downloaded)
 		updateTimestampMapping(timestampMapping, img)
+
+		blacklisted, err := app.isCivitaiImageBlacklisted(img.ID)
+		if err != nil {
+			return fmt.Errorf("check deletion blacklist for image %d: %v", img.ID, err)
+		}
+		if blacklisted {
+			fmt.Printf("Reached previously deleted image %d, capturing timestamps for remaining images on this page\n", img.ID)
+			foundExisting = true
+			continue
+		}
 
 		// If we already found an existing image, skip downloading but continue capturing timestamps
 		if foundExisting {

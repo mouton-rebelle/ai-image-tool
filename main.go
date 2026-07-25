@@ -317,6 +317,7 @@ func (app *App) setupRoutes(router *mux.Router) {
 	router.HandleFunc("/api/images", app.handleAPIImages).Methods("GET")
 	router.HandleFunc("/api/models", app.handleModelStats).Methods("GET")
 	router.HandleFunc("/search", app.handleSearch).Methods("GET")
+	router.HandleFunc("/api/images/{id}", app.handleDeleteImage).Methods("DELETE")
 	router.HandleFunc("/api/toggle-category", app.handleToggleCategory).Methods("POST")
 	router.HandleFunc("/api/generate-prompt", app.handleGeneratePrompt).Methods("POST")
 	router.HandleFunc("/api/comfy/generate-prompt", app.handleComfyGeneratePrompt).Methods("POST")

@@ -85,6 +85,19 @@ func (app *App) initDB() error {
 	CREATE INDEX IF NOT EXISTS idx_lora_name ON loras(name);
 	`
 
+	// Keep tombstones for deleted Civitai images so imports do not download
+	// them again after their files and active database rows are removed.
+	createDeletedCivitaiImagesTable := `
+	CREATE TABLE IF NOT EXISTS deleted_civitai_images (
+		civitai_image_id INTEGER PRIMARY KEY,
+		filename TEXT NOT NULL,
+		deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_deleted_civitai_images_deleted_at
+		ON deleted_civitai_images(deleted_at DESC);
+	`
+
 	_, err = app.db.Exec(createModelsTable)
 	if err != nil {
 		return err
@@ -96,6 +109,11 @@ func (app *App) initDB() error {
 	}
 
 	_, err = app.db.Exec(createLorasTable)
+	if err != nil {
+		return err
+	}
+
+	_, err = app.db.Exec(createDeletedCivitaiImagesTable)
 	if err != nil {
 		return err
 	}

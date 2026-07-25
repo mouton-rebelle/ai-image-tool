@@ -5,7 +5,7 @@
     <title>{{.Title}}</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/masonry-layout@4/dist/masonry.pkgd.min.js"></script>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=20260725-delete-image-2">
 </head>
 <body>
     <div class="container">
@@ -121,6 +121,9 @@
                     </div>
                     <button id="category-toggle-btn" class="category-toggle-btn" onclick="toggleImageCategory()" title="Move to other category">
                         <span id="category-toggle-text">hide</span>
+                    </button>
+                    <button id="delete-image-btn" class="delete-image-btn" type="button" onclick="deleteCurrentImage()" title="Delete image">
+                        <span id="delete-image-text">delete</span>
                     </button>
                 </div>
             </div>
@@ -620,17 +623,21 @@
         }
 
         window.resetPromptGenerationControls();
+        window.resetDeleteImageControls();
     };
 
     window.closeLightbox = function() {
         const lightbox = document.getElementById('lightbox');
         lightbox.classList.remove('active');
+        window.resetDeleteImageControls();
 
         // Restore body scroll
         document.body.style.overflow = '';
     };
 
     window.showPrevImage = function() {
+        if (window.imageDeletionInProgress) return;
+
         if (window.currentLightboxIndex > 0) {
             window.currentLightboxIndex--;
             const lightboxImg = document.getElementById('lightbox-img');
@@ -647,6 +654,8 @@
     };
 
     window.showNextImage = function() {
+        if (window.imageDeletionInProgress) return;
+
         if (window.currentLightboxIndex < window.lightboxImages.length - 1) {
             window.currentLightboxIndex++;
             const lightboxImg = document.getElementById('lightbox-img');
@@ -989,6 +998,127 @@
 
     window.initializePromptGenerationForm();
 
+    window.deleteImageConfirmationTimer = null;
+    window.imageDeletionInProgress = false;
+
+    window.resetDeleteImageControls = function() {
+        if (window.deleteImageConfirmationTimer !== null) {
+            clearTimeout(window.deleteImageConfirmationTimer);
+            window.deleteImageConfirmationTimer = null;
+        }
+
+        const button = document.getElementById('delete-image-btn');
+        const buttonText = document.getElementById('delete-image-text');
+        if (!button || !buttonText) return;
+
+        button.disabled = false;
+        button.classList.remove('is-confirming');
+        buttonText.textContent = 'delete';
+        button.title = 'Delete image';
+        button.setAttribute('aria-label', 'Delete image');
+    };
+
+    window.removeDeletedImageFromView = function(imageID) {
+        const deletedID = String(imageID);
+        const deletedIndex = window.lightboxMetadata.findIndex(metadata => metadata.id === deletedID);
+        const imageLink = document.querySelector(
+            `#unified-grid .image-card a[data-image-id="${deletedID}"]`
+        );
+        const imageCard = imageLink ? imageLink.closest('.image-card') : null;
+
+        if (imageCard) {
+            if (window.MasonryManager && window.MasonryManager.removeItem) {
+                window.MasonryManager.removeItem(imageCard);
+            } else {
+                imageCard.remove();
+            }
+        }
+
+        if (typeof window.totalCount === 'number') {
+            window.totalCount = Math.max(0, window.totalCount - 1);
+            window.updateImageCount();
+        }
+
+        window.buildLightboxImageList();
+        if (window.lightboxMetadata.length === 0) {
+            window.closeLightbox();
+            return;
+        }
+
+        window.currentLightboxIndex = Math.min(
+            Math.max(deletedIndex, 0),
+            window.lightboxMetadata.length - 1
+        );
+        const metadata = window.lightboxMetadata[window.currentLightboxIndex];
+        document.getElementById('lightbox-img').src = metadata.src;
+        window.populateLightboxMetadata(
+            metadata.model,
+            metadata.steps,
+            metadata.cfg,
+            metadata.sampler,
+            metadata.scheduler,
+            metadata.seed,
+            metadata.prompt,
+            metadata.negPrompt,
+            metadata.loras
+        );
+        window.updateArrowVisibility();
+
+        window.modelStatsRequestVersion++;
+        window.refreshModelOptions(
+            window.currentNSFWFilter || 'all',
+            window.modelStatsRequestVersion
+        );
+    };
+
+    window.deleteCurrentImage = async function() {
+        const currentImageData = window.lightboxMetadata[window.currentLightboxIndex];
+        if (!currentImageData?.id || window.imageDeletionInProgress) return;
+
+        const button = document.getElementById('delete-image-btn');
+        const buttonText = document.getElementById('delete-image-text');
+
+        if (!button.classList.contains('is-confirming')) {
+            button.classList.add('is-confirming');
+            buttonText.textContent = 'confirm?';
+            button.title = 'Click again to permanently delete this image';
+            button.setAttribute('aria-label', 'Confirm permanent image deletion');
+            window.deleteImageConfirmationTimer = setTimeout(
+                window.resetDeleteImageControls,
+                4000
+            );
+            return;
+        }
+
+        if (window.deleteImageConfirmationTimer !== null) {
+            clearTimeout(window.deleteImageConfirmationTimer);
+            window.deleteImageConfirmationTimer = null;
+        }
+
+        const imageID = parseInt(currentImageData.id, 10);
+        window.imageDeletionInProgress = true;
+        button.disabled = true;
+        buttonText.textContent = '...';
+
+        try {
+            const response = await fetch(`/api/images/${imageID}`, {
+                method: 'DELETE'
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Image deletion failed');
+            }
+
+            window.imageDeletionInProgress = false;
+            window.removeDeletedImageFromView(imageID);
+        } catch (error) {
+            console.error('Error deleting image:', error);
+            window.imageDeletionInProgress = false;
+            window.resetDeleteImageControls();
+            alert('Failed to delete image: ' + error.message);
+        }
+    };
+
     window.toggleImageCategory = function() {
         const currentImageData = window.lightboxMetadata[window.currentLightboxIndex];
         if (!currentImageData || !currentImageData.id) return;
@@ -1096,6 +1226,11 @@
     document.addEventListener('keydown', function(e) {
         const lightbox = document.getElementById('lightbox');
         if (lightbox.classList.contains('active')) {
+            const promptForm = document.getElementById('prompt-remix-form');
+            const promptFormUsesArrowKeys = !promptForm.hidden &&
+                (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
+            if (promptFormUsesArrowKeys) return;
+
             switch(e.key) {
                 case 'Escape':
                     closeLightbox();
@@ -1276,6 +1411,18 @@
             }
         }
 
+        function removeItem(item) {
+            if (!item) return;
+
+            if (masonryInstance && mainGrid && mainGrid.contains(item)) {
+                masonryInstance.remove(item);
+                masonryInstance.layout();
+                return;
+            }
+
+            item.remove();
+        }
+
         // Handle resize with debouncing
         function handleResize() {
             clearTimeout(globalResizeTimeout);
@@ -1334,6 +1481,7 @@
         return {
             initializeGrid: initializeGrid,
             appendItems: appendItems,
+            removeItem: removeItem,
             handleResize: handleResize,
             destroyInstance: destroyInstance
         };

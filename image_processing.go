@@ -64,6 +64,18 @@ func (app *App) processImages() error {
 	for i, imagePath := range uniqueFiles {
 		filename := filepath.Base(imagePath)
 
+		if civitaiID, ok := civitaiImageIDFromFilename(filename); ok {
+			blacklisted, err := app.isCivitaiImageBlacklisted(civitaiID)
+			if err != nil {
+				log.Printf("Error checking deletion blacklist for %s: %v", filename, err)
+				continue
+			}
+			if blacklisted {
+				fmt.Printf("Skipping %s (previously deleted)\n", filename)
+				continue
+			}
+		}
+
 		// Check if already processed
 		var count int
 		err := app.db.QueryRow("SELECT COUNT(*) FROM images WHERE filename = ?", filename).Scan(&count)
