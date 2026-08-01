@@ -14,6 +14,11 @@ const (
 	// needs a much larger budget than the in-app prompt generation route.
 	maxComfyPromptRequestBytes = 24 << 20
 	maxComfySourcePromptRunes  = 20000
+	// The in-app steering limit exists to match the textarea in the web UI. The
+	// ComfyUI node has no such widget cap, and directions pasted there routinely
+	// run to a full structured brief, so give them the same budget as the source
+	// prompt.
+	maxComfySteeringRunes = 20000
 )
 
 type comfyGeneratePromptRequest struct {
@@ -58,7 +63,7 @@ func (app *App) handleComfyGeneratePrompt(w http.ResponseWriter, r *http.Request
 		writeGeneratePromptJSON(w, http.StatusBadRequest, generatePromptResponse{Error: "The source prompt is too long"})
 		return
 	}
-	if len([]rune(request.Steering)) > maxPromptSteeringCharacters {
+	if len([]rune(request.Steering)) > maxComfySteeringRunes {
 		writeGeneratePromptJSON(w, http.StatusBadRequest, generatePromptResponse{Error: "Creative direction is too long"})
 		return
 	}

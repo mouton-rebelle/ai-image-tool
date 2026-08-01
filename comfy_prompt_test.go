@@ -17,6 +17,34 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// The ComfyUI node has no widget cap on the creative direction, so a full
+// structured brief must go through even though it dwarfs the web UI's textarea.
+func TestHandleComfyGeneratePromptAcceptsLongCreativeDirection(t *testing.T) {
+	generator := &recordingPromptGenerator{}
+	app := &App{promptGenerator: generator}
+
+	steering := strings.Repeat("a", maxPromptSteeringCharacters*3)
+	requestBody, err := json.Marshal(comfyGeneratePromptRequest{
+		Prompt:      "comfy source prompt",
+		TargetModel: "anima",
+		Concept:     "remix",
+		Steering:    steering,
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	app.handleComfyGeneratePrompt(recorder, httptest.NewRequest(http.MethodPost, "/api/comfy/generate-prompt", bytes.NewReader(requestBody)))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if generator.input.Steering != steering {
+		t.Errorf("creative direction was not forwarded intact (%d runes received)", len([]rune(generator.input.Steering)))
+	}
+}
+
 func TestHandleComfyGeneratePrompt(t *testing.T) {
 	generator := &recordingPromptGenerator{}
 	app := &App{promptGenerator: generator}
@@ -129,7 +157,7 @@ func TestHandleComfyGeneratePromptRejectsInvalidRequests(t *testing.T) {
 		{name: "non image payload", body: `{"prompt":"a","target_model":"anima","concept":"remix","image_base64":"aGVsbG8="}`, expected: http.StatusBadRequest},
 		{
 			name:     "steering too long",
-			body:     `{"prompt":"a","target_model":"anima","concept":"remix","steering":"` + strings.Repeat("a", maxPromptSteeringCharacters+1) + `"}`,
+			body:     `{"prompt":"a","target_model":"anima","concept":"remix","steering":"` + strings.Repeat("a", maxComfySteeringRunes+1) + `"}`,
 			expected: http.StatusBadRequest,
 		},
 	}
