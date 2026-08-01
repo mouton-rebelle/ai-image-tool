@@ -398,7 +398,8 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 	return true, nil
 }
 
-// checkForNewCivitaiImages checks for new images on startup and stops as soon as it finds an already-imported image
+// checkForNewCivitaiImages checks for new images on startup by scanning the most
+// recent page of the user's feed and downloading everything it doesn't have yet.
 func (app *App) checkForNewCivitaiImages() error {
 	config := getImportConfig()
 
@@ -444,63 +445,9 @@ func (app *App) checkForNewCivitaiImages() error {
 		return nil
 	}
 
-	newImagesCount := 0
-	foundExisting := false
-
-	// Process each image - capture timestamps for all, download only new ones
-	for _, img := range images {
-		// Check if image already exists
-		ext := filepath.Ext(img.URL)
-		if ext == "" {
-			ext = ".jpg"
-		}
-
-		filename := fmt.Sprintf("%d%s", img.ID, ext)
-
-		// Always update timestamp mapping for this image (even if already downloaded)
-		updateTimestampMapping(timestampMapping, img)
-
-		blacklisted, err := app.isCivitaiImageBlacklisted(img.ID)
-		if err != nil {
-			return fmt.Errorf("check deletion blacklist for image %d: %v", img.ID, err)
-		}
-		if blacklisted {
-			fmt.Printf("Reached previously deleted image %d, capturing timestamps for remaining images on this page\n", img.ID)
-			foundExisting = true
-			continue
-		}
-
-		// If we already found an existing image, skip downloading but continue capturing timestamps
-		if foundExisting {
-			continue
-		}
-
-		// If file exists in either directory, we've reached already-imported content
-		sfwPath := filepath.Join("images", filename)
-		nsfwPath := filepath.Join("images_nsfw", filename)
-
-		if _, err := os.Stat(sfwPath); err == nil {
-			fmt.Printf("Reached already-imported image %d (in SFW), capturing timestamps for remaining images on this page\n", img.ID)
-			foundExisting = true
-			continue
-		}
-		if _, err := os.Stat(nsfwPath); err == nil {
-			fmt.Printf("Reached already-imported image %d (in NSFW), capturing timestamps for remaining images on this page\n", img.ID)
-			foundExisting = true
-			continue
-		}
-
-		// Download new image
-		downloaded, err := app.downloadImage(img)
-		if err != nil {
-			fmt.Printf("Error downloading image %d: %v\n", img.ID, err)
-			continue
-		}
-
-		if downloaded {
-			newImagesCount++
-			fmt.Printf("Downloaded new image %d\n", img.ID)
-		}
+	newImagesCount, err := app.downloadMissingFeedImages(images, timestampMapping, app.downloadImage)
+	if err != nil {
+		return err
 	}
 
 	// Save timestamp mapping
@@ -515,6 +462,58 @@ func (app *App) checkForNewCivitaiImages() error {
 	}
 
 	return nil
+}
+
+// downloadMissingFeedImages records the timestamp of every image on a feed page and
+// downloads the ones that aren't on disk yet. It returns the number of downloads.
+//
+// It deliberately does NOT stop at the first already-imported image. The feed is
+// sorted by the image's generation date, not by its publication date, so a post
+// published today can appear *below* images imported days ago. Bailing out on the
+// first hit permanently skipped every image of such a post.
+func (app *App) downloadMissingFeedImages(images []CivitaiImage, timestampMapping TimestampMapping, download func(CivitaiImage) (bool, error)) (int, error) {
+	newImagesCount := 0
+
+	for _, img := range images {
+		ext := filepath.Ext(img.URL)
+		if ext == "" {
+			ext = ".jpg"
+		}
+
+		filename := fmt.Sprintf("%d%s", img.ID, ext)
+
+		// Always update timestamp mapping for this image (even if already downloaded)
+		updateTimestampMapping(timestampMapping, img)
+
+		blacklisted, err := app.isCivitaiImageBlacklisted(img.ID)
+		if err != nil {
+			return newImagesCount, fmt.Errorf("check deletion blacklist for image %d: %v", img.ID, err)
+		}
+		if blacklisted {
+			continue
+		}
+
+		// Already present in either directory: nothing to download for this one.
+		if _, err := os.Stat(filepath.Join("images", filename)); err == nil {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join("images_nsfw", filename)); err == nil {
+			continue
+		}
+
+		downloaded, err := download(img)
+		if err != nil {
+			fmt.Printf("Error downloading image %d: %v\n", img.ID, err)
+			continue
+		}
+
+		if downloaded {
+			newImagesCount++
+			fmt.Printf("Downloaded new image %d\n", img.ID)
+		}
+	}
+
+	return newImagesCount, nil
 }
 
 // TimestampMapping represents the structure of civitai_timestamps.json

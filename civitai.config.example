@@ -10,7 +10,7 @@
 CIVITAI_USERNAME=your_username
 
 # Optional: Enable automatic import on startup (true/false)
-# When enabled, the app will check for new images on startup and stop as soon as it finds an already-imported image
+# When enabled, the app checks the most recent page of the feed on startup and downloads anything missing
 AUTO_IMPORT_ON_STARTUP=false
 
 # Note: Import will fetch all images (both SFW and NSFW)
