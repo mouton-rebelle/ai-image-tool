@@ -1,23 +1,40 @@
+{{define "media-card"}}
+<div class="image-card{{if .IsVideo}} is-video{{end}}">
+    <a href="{{.ImageURL}}"
+       data-image-id="{{.ID}}"
+       data-media-type="{{.MediaType}}"
+       data-duration="{{.DurationLabel}}"
+       data-model="{{.Model}}"
+       data-steps="{{.Steps}}"
+       data-cfg="{{printf "%.1f" .CFGScale}}"
+       data-sampler="{{.Sampler}}"
+       data-scheduler="{{.Scheduler}}"
+       data-seed="{{.Seed}}"
+       data-prompt="{{.Prompt}}"
+       data-neg-prompt="{{.NegPrompt}}"
+       data-loras="{{range $i, $lora := .LoRAs}}{{if $i}},{{end}}{{$lora.Name}}:{{printf "%.2f" $lora.Weight}}{{end}}"
+       data-nsfw="{{.IsNSFW}}"
+       onclick="event.preventDefault(); openLightboxFromData(this, '{{.ImageURL}}'); return false;">
+        {{if .IsVideo}}
+        <div class="media-frame"{{if .AspectRatio}} style="aspect-ratio: {{.AspectRatio}}"{{end}}>
+            <video class="grid-video"
+                   data-src="{{.ImageURL}}"
+                   poster="{{.ThumbnailURL}}"
+                   muted loop playsinline preload="none"
+                   disablepictureinpicture
+                   aria-label="Video {{.ID}}"></video>
+        </div>
+        <span class="media-badge">{{if .DurationLabel}}{{.DurationLabel}}{{else}}video{{end}}</span>
+        {{else}}
+        <img src="{{.ThumbnailURL}}" alt="Image {{.ID}}">
+        {{end}}
+    </a>
+</div>
+{{end}}
 {{if eq .CurrentPage 1}}
 <div class="image-grid" id="unified-grid">
 {{range .Images}}
-    <div class="image-card">
-        <a href="{{.ImageURL}}"
-           data-image-id="{{.ID}}"
-           data-model="{{.Model}}"
-           data-steps="{{.Steps}}"
-           data-cfg="{{printf "%.1f" .CFGScale}}"
-           data-sampler="{{.Sampler}}"
-           data-scheduler="{{.Scheduler}}"
-           data-seed="{{.Seed}}"
-           data-prompt="{{.Prompt}}"
-           data-neg-prompt="{{.NegPrompt}}"
-           data-loras="{{range $i, $lora := .LoRAs}}{{if $i}},{{end}}{{$lora.Name}}:{{printf "%.2f" $lora.Weight}}{{end}}"
-           data-nsfw="{{.IsNSFW}}"
-           onclick="event.preventDefault(); openLightboxFromData(this, '{{.ImageURL}}'); return false;">
-            <img src="/thumbnails/{{.Filename}}" alt="Image {{.ID}}">
-        </a>
-    </div>
+    {{template "media-card" .}}
 {{end}}
 </div>
 
@@ -40,28 +57,18 @@ if (window.MasonryManager) {
     }
 }
 
+// Only play the videos that are actually on screen
+if (window.VideoPlayback) {
+    window.VideoPlayback.observeAll();
+}
+
 
 if (!window.updateLoadMore) {
     window.updateLoadMore = function() {
         const loadMore = document.getElementById('load-more');
         if (loadMore && window.hasMore) {
             const nextPage = window.currentPage + 1;
-            const params = new URLSearchParams();
-            params.set('page', nextPage);
-
-            if (window.currentSearch && window.currentSearch.trim() !== '') {
-                params.set('q', window.currentSearch);
-            }
-
-            if (window.currentModel && window.currentModel !== 'all') {
-                params.set('model', window.currentModel);
-            }
-
-            if (window.currentNSFWFilter && window.currentNSFWFilter !== 'all') {
-                params.set('nsfw', window.currentNSFWFilter);
-            }
-
-            const url = params.get('q') || params.get('model') ? `/search?${params.toString()}` : `/api/images?${params.toString()}`;
+            const url = window.gridURL(nextPage);
 
             loadMore.setAttribute('hx-get', url);
             loadMore.setAttribute('hx-trigger', 'intersect once');
@@ -70,7 +77,7 @@ if (!window.updateLoadMore) {
             // Re-initialize HTMX for the updated element
             htmx.process(loadMore);
 
-            console.log('Load more updated for next page:', nextPage, 'URL:', url, 'Search:', window.currentSearch, 'Model:', window.currentModel, 'NSFW:', window.currentNSFWFilter);
+            console.log('Load more updated for next page:', nextPage, 'URL:', url);
         } else if (loadMore) {
             loadMore.style.display = 'none';
             console.log('No more pages to load');
@@ -157,23 +164,7 @@ if (window.updateLoadMore) {
 </script>
 {{else}}
 {{range .Images}}
-<div class="image-card">
-    <a href="{{.ImageURL}}"
-       data-image-id="{{.ID}}"
-       data-model="{{.Model}}"
-       data-steps="{{.Steps}}"
-       data-cfg="{{printf "%.1f" .CFGScale}}"
-       data-sampler="{{.Sampler}}"
-       data-scheduler="{{.Scheduler}}"
-       data-seed="{{.Seed}}"
-       data-prompt="{{.Prompt}}"
-       data-neg-prompt="{{.NegPrompt}}"
-       data-loras="{{range $i, $lora := .LoRAs}}{{if $i}},{{end}}{{$lora.Name}}:{{printf "%.2f" $lora.Weight}}{{end}}"
-       data-nsfw="{{.IsNSFW}}"
-       onclick="event.preventDefault(); openLightboxFromData(this, '{{.ImageURL}}'); return false;">
-        <img src="/thumbnails/{{.Filename}}" alt="Image {{.ID}}">
-    </a>
-</div>
+{{template "media-card" .}}
 {{end}}
 <script>
 window.hasMore = {{.HasNext}};
@@ -182,6 +173,10 @@ window.totalCount = {{.TotalCount}};
 // Append new items to existing Masonry instance
 if (window.MasonryManager) {
     window.MasonryManager.appendItems();
+}
+
+if (window.VideoPlayback) {
+    window.VideoPlayback.observeAll();
 }
 
 document.dispatchEvent(new CustomEvent('pageLoaded'));

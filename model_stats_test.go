@@ -58,7 +58,7 @@ func TestGetModelStatsFiltersByImageCategory(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stats, othersCount, err := app.getModelStats(tt.filter)
+			stats, othersCount, err := app.getModelStats(tt.filter, "all")
 			if err != nil {
 				t.Fatalf("getModelStats(%q): %v", tt.filter, err)
 			}

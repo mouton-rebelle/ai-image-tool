@@ -62,9 +62,20 @@ func (app *App) promptImagePath(filename string, isNSFW bool) (string, error) {
 	if filename == "" || filepath.Base(filename) != filename {
 		return "", errors.New("invalid image filename")
 	}
-	directory := "images"
-	if isNSFW {
-		directory = "images_nsfw"
+	return filepath.Join(app.promptImageBaseDir, mediaDirForFilename(filename, isNSFW), filename), nil
+}
+
+// preparePromptMedia turns a library file into an image the prompt model can
+// look at. Videos are sampled: the model sees a single frame, which is enough
+// for describing and remixing but loses the motion.
+func preparePromptMedia(mediaPath string) (*PromptImage, error) {
+	if !isVideoFilename(mediaPath) {
+		return preparePromptImage(mediaPath)
 	}
-	return filepath.Join(app.promptImageBaseDir, directory, filename), nil
+
+	frame, err := extractVideoFrameJPEG(mediaPath)
+	if err != nil {
+		return nil, fmt.Errorf("extract prompt frame: %w", err)
+	}
+	return preparePromptImageFromBytes(frame)
 }

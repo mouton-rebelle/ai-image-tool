@@ -3,8 +3,10 @@ civitai.config
 
 images/
 images_nsfw/
-video/
+videos/
+videos_nsfw/
 thumbnails/
+temp/
 *.db
 *.db-shm
 *.db-wal

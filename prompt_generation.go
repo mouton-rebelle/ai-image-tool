@@ -456,7 +456,7 @@ func (app *App) handleGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 		writeGeneratePromptJSON(w, http.StatusInternalServerError, generatePromptResponse{Error: "The source image could not be loaded"})
 		return
 	}
-	promptImage, err := preparePromptImage(imagePath)
+	promptImage, err := preparePromptMedia(imagePath)
 	if err != nil {
 		log.Printf("Failed to prepare image %d for prompt generation: %v", request.ImageID, err)
 		writeGeneratePromptJSON(w, http.StatusInternalServerError, generatePromptResponse{Error: "The source image could not be loaded"})

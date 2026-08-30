@@ -160,11 +160,8 @@ func (app *App) importFromCivitai() error {
 	fmt.Println()
 
 	// Create directories
-	if err := os.MkdirAll("images", 0755); err != nil {
-		return fmt.Errorf("failed to create images directory: %v", err)
-	}
-	if err := os.MkdirAll("images_nsfw", 0755); err != nil {
-		return fmt.Errorf("failed to create images_nsfw directory: %v", err)
+	if err := ensureMediaDirs(); err != nil {
+		return fmt.Errorf("failed to create media directories: %v", err)
 	}
 
 	// Load excluded words
@@ -327,27 +324,22 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 		ext = ".jpg" // Default extension
 	}
 
+	filename := fmt.Sprintf("%d%s", img.ID, ext)
+
 	// Determine directory based on NSFW level.
 	// Civitai's `nsfw` boolean is true for anything above "None" (i.e. Soft/
 	// PG-13 too), which over-classifies. Match the historical behaviour: only
-	// the hardest "X" level goes to images_nsfw; None/Soft/Mature stay SFW.
-	dir := "images"
-	if img.NSFWLevel == "X" {
-		dir = "images_nsfw"
+	// the hardest "X" level goes to the NSFW library; None/Soft/Mature stay SFW.
+	// Videos land in their own pair of directories.
+	filePath := filepath.Join(mediaDirForFilename(filename, img.NSFWLevel == "X"), filename)
+
+	// Check if the file already exists in any library directory
+	if _, found := findMediaPath(filename); found {
+		return false, nil
 	}
 
-	filename := fmt.Sprintf("%d%s", img.ID, ext)
-	filePath := filepath.Join(dir, filename)
-
-	// Check if file already exists in either SFW or NSFW directory
-	sfwPath := filepath.Join("images", filename)
-	nsfwPath := filepath.Join("images_nsfw", filename)
-
-	if _, err := os.Stat(sfwPath); err == nil {
-		return false, nil // File already exists in SFW directory
-	}
-	if _, err := os.Stat(nsfwPath); err == nil {
-		return false, nil // File already exists in NSFW directory
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return false, fmt.Errorf("failed to create download directory: %v", err)
 	}
 
 	// Download the image (use a client with a timeout; the default client has none)
@@ -417,11 +409,8 @@ func (app *App) checkForNewCivitaiImages() error {
 	fmt.Printf("Checking for new Civitai images for user: %s\n", config.Username)
 
 	// Create directories if they don't exist
-	if err := os.MkdirAll("images", 0755); err != nil {
-		return fmt.Errorf("failed to create images directory: %v", err)
-	}
-	if err := os.MkdirAll("images_nsfw", 0755); err != nil {
-		return fmt.Errorf("failed to create images_nsfw directory: %v", err)
+	if err := ensureMediaDirs(); err != nil {
+		return fmt.Errorf("failed to create media directories: %v", err)
 	}
 
 	// Load excluded words
@@ -493,11 +482,8 @@ func (app *App) downloadMissingFeedImages(images []CivitaiImage, timestampMappin
 			continue
 		}
 
-		// Already present in either directory: nothing to download for this one.
-		if _, err := os.Stat(filepath.Join("images", filename)); err == nil {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join("images_nsfw", filename)); err == nil {
+		// Already present in any library directory: nothing to download.
+		if _, found := findMediaPath(filename); found {
 			continue
 		}
 

@@ -117,6 +117,11 @@ func (app *App) tryParseJSON(text string, metadata *ImageMetadata) bool {
 		return true
 	}
 
+	// Try a raw ComfyUI API graph (what ComfyUI writes as the "prompt" blob)
+	if app.parseComfyAPIPrompt(trimmed, metadata) {
+		return true
+	}
+
 	log.Printf("Found JSON but couldn't parse it as known format: %s", trimmed[:min(100, len(trimmed))])
 	return false
 }

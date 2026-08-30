@@ -85,10 +85,40 @@ type ImageMetadata struct {
 	Seed             int64      `json:"seed"`
 	ThumbnailPath    string     `json:"thumbnail_path"`
 	IsNSFW           bool       `json:"is_nsfw"`
-	ImageURL         string     `json:"image_url"`         // Full URL to the image
+	ImageURL         string     `json:"image_url"`         // Full URL to the image or video
+	ThumbnailURL     string     `json:"thumbnail_url"`     // Full URL to the thumbnail / video poster
 	DisplayTimestamp *time.Time `json:"display_timestamp"` // Computed chronological timestamp
+	MediaType        string     `json:"media_type"`        // "image" or "video"
+	Duration         float64    `json:"duration"`          // Video length in seconds, 0 for images
+	HasAudio         bool       `json:"has_audio"`         // Whether a video carries an audio track
 	TruncatedPrompt  string     `json:"-"`
 	LoRAs            []LoraData `json:"loras"` // LoRA data for JSON and template display
+}
+
+// IsVideo reports whether this entry should be rendered as a video.
+func (img ImageMetadata) IsVideo() bool {
+	return img.MediaType == mediaTypeVideo
+}
+
+// AspectRatio returns a CSS aspect-ratio value so the masonry grid can reserve
+// the right height before the media itself has loaded. It is typed as CSS
+// because html/template otherwise refuses to interpolate into a style
+// attribute; the value is built from two integers, so it cannot inject
+// anything.
+func (img ImageMetadata) AspectRatio() template.CSS {
+	if img.Width <= 0 || img.Height <= 0 {
+		return ""
+	}
+	return template.CSS(fmt.Sprintf("%d / %d", img.Width, img.Height))
+}
+
+// DurationLabel formats a video length as m:ss for the grid badge.
+func (img ImageMetadata) DurationLabel() string {
+	if !img.IsVideo() || img.Duration <= 0 {
+		return ""
+	}
+	total := int(img.Duration + 0.5)
+	return fmt.Sprintf("%d:%02d", total/60, total%60)
 }
 
 type ModelStat struct {
@@ -103,6 +133,9 @@ type PageData struct {
 	TotalCount      int
 	SearchQuery     string
 	NSFWFilter      string
+	MediaFilter     string
+	ShowImages      bool
+	ShowVideos      bool
 	Models          []ModelStat
 	OthersCount     int
 	InitialURL      string
@@ -147,6 +180,7 @@ func main() {
 	cleanDuplicates := flag.Bool("clean-duplicates", false, "Move duplicate images from images_nsfw to temp folder")
 	fixTimestamps := flag.Bool("fix-timestamps", false, "Fix display timestamps for existing Civitai images using real creation dates")
 	fixMetadata := flag.String("fix-metadata", "", "Re-process metadata for specific images (comma-separated filenames)")
+	reindexVideos := flag.Bool("reindex-videos", false, "Re-process metadata for every indexed video")
 	help := flag.Bool("help", false, "Show usage information")
 	flag.Parse()
 
@@ -159,6 +193,7 @@ func main() {
 		fmt.Println("  ./ai-generated-image-viewer -clean-duplicates # Move duplicate NSFW images to temp folder")
 		fmt.Println("  ./ai-generated-image-viewer -fix-timestamps   # Fix display timestamps using real Civitai creation dates")
 		fmt.Println("  ./ai-generated-image-viewer -fix-metadata=\"img1.jpeg,img2.jpeg\" # Re-process metadata for specific images")
+		fmt.Println("  ./ai-generated-image-viewer -reindex-videos   # Re-process metadata for every indexed video")
 		fmt.Println("  ./ai-generated-image-viewer -help             # Show this help")
 		fmt.Println("")
 		fmt.Println("Server Configuration:")
@@ -268,6 +303,21 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle reindex-videos flag
+	if *reindexVideos {
+		filenames, err := app.indexedVideoFilenames()
+		if err != nil {
+			log.Fatal("Failed to list indexed videos:", err)
+		}
+
+		updatedCount, err := app.fixImageMetadata(filenames)
+		if err != nil {
+			log.Fatal("Failed to reindex videos:", err)
+		}
+		fmt.Printf("Video reindex completed. %d of %d videos updated.\n", updatedCount, len(filenames))
+		os.Exit(0)
+	}
+
 	// Check for new Civitai images on startup if auto-import is enabled
 	if err := app.checkForNewCivitaiImages(); err != nil {
 		log.Printf("Warning: Auto-import failed: %v", err)
@@ -307,9 +357,11 @@ func (app *App) initTemplates() error {
 
 func (app *App) setupRoutes(router *mux.Router) {
 	// Serve static files
-	router.PathPrefix("/images/").Handler(http.StripPrefix("/images/", http.FileServer(http.Dir("./images/"))))
-	router.PathPrefix("/images_nsfw/").Handler(http.StripPrefix("/images_nsfw/", http.FileServer(http.Dir("./images_nsfw/"))))
-	router.PathPrefix("/thumbnails/").Handler(http.StripPrefix("/thumbnails/", http.FileServer(http.Dir("./thumbnails/"))))
+	for _, dir := range mediaDirs() {
+		prefix := "/" + dir + "/"
+		router.PathPrefix(prefix).Handler(http.StripPrefix(prefix, http.FileServer(http.Dir("./"+dir+"/"))))
+	}
+	router.PathPrefix("/thumbnails/").HandlerFunc(app.handleThumbnail)
 	router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 
 	// API routes
@@ -323,11 +375,65 @@ func (app *App) setupRoutes(router *mux.Router) {
 	router.HandleFunc("/api/comfy/generate-prompt", app.handleComfyGeneratePrompt).Methods("POST")
 }
 
+// handleThumbnail serves a thumbnail, generating it from the source media when
+// it is missing. Thumbnails are a cache: wiping the directory costs a slower
+// first load, not a broken grid.
+func (app *App) handleThumbnail(w http.ResponseWriter, r *http.Request) {
+	requested := strings.TrimPrefix(r.URL.Path, "/thumbnails/")
+	filename := filepath.Base(requested)
+	if requested == "" || requested != filename || filename == "." {
+		http.NotFound(w, r)
+		return
+	}
+
+	thumbnailPath := filepath.Join("thumbnails", filename)
+	if info, err := os.Stat(thumbnailPath); err == nil && info.Size() > 0 {
+		http.ServeFile(w, r, thumbnailPath)
+		return
+	}
+
+	// A video poster is stored as {id}.jpg, so recover the source media name by
+	// looking for any file with that stem across the libraries.
+	sourceName, found := sourceMediaForThumbnail(filename)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+
+	regenerated, err := app.ensureThumbnail(sourceName)
+	if err != nil {
+		log.Printf("Failed to regenerate thumbnail for %s: %v", sourceName, err)
+		http.NotFound(w, r)
+		return
+	}
+
+	http.ServeFile(w, r, regenerated)
+}
+
+// sourceMediaForThumbnail maps a thumbnail filename back to the media file it
+// was generated from.
+func sourceMediaForThumbnail(thumbnailName string) (string, bool) {
+	if _, found := findMediaPath(thumbnailName); found {
+		return thumbnailName, true
+	}
+
+	stem := strings.TrimSuffix(thumbnailName, filepath.Ext(thumbnailName))
+	for extension := range videoExtensions {
+		candidate := stem + extension
+		if _, found := findMediaPath(candidate); found {
+			return candidate, true
+		}
+	}
+
+	return "", false
+}
+
 func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// Check for URL parameters
 	promptQuery := r.URL.Query().Get("q")
 	modelFilter := r.URL.Query().Get("model")
 	nsfwFilter := r.URL.Query().Get("nsfw")
+	mediaFilter := normalizeMediaFilter(r.URL.Query().Get("media"))
 
 	// Parse selected model ID
 	var selectedModelID int
@@ -359,6 +465,10 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		args = append(args, modelArgs...)
 	}
 
+	if condition := mediaFilterCondition(mediaFilter); condition != "" {
+		whereClause += " AND " + condition
+	}
+
 	if promptQuery != "" {
 		whereClause += " AND i.prompt LIKE ?"
 		searchTerm := "%" + promptQuery + "%"
@@ -382,7 +492,7 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get model statistics
-	models, othersCount, err := app.getModelStats(nsfwFilter)
+	models, othersCount, err := app.getModelStats(nsfwFilter, mediaFilter)
 	if err != nil {
 		log.Printf("Error getting model stats: %v", err)
 		models = []ModelStat{}
@@ -390,20 +500,22 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build initial URL for HTMX request
-	var initialURL string
+	params := url.Values{}
+	params.Set("page", "1")
+	params.Set("nsfw", nsfwFilter)
+	if mediaFilter != "all" {
+		params.Set("media", mediaFilter)
+	}
+	if promptQuery != "" {
+		params.Set("q", promptQuery)
+	}
+	if modelFilter != "" && modelFilter != "all" {
+		params.Set("model", modelFilter)
+	}
+
+	initialURL := "/api/images?" + params.Encode()
 	if promptQuery != "" || modelFilter != "" {
-		params := url.Values{}
-		if promptQuery != "" {
-			params.Set("q", promptQuery)
-		}
-		if modelFilter != "" && modelFilter != "all" {
-			params.Set("model", modelFilter)
-		}
-		params.Set("nsfw", nsfwFilter)
-		params.Set("page", "1")
 		initialURL = "/search?" + params.Encode()
-	} else {
-		initialURL = "/api/images?page=1&nsfw=" + nsfwFilter
 	}
 
 	data := PageData{
@@ -411,6 +523,9 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		TotalCount:      totalCount,
 		SearchQuery:     promptQuery,
 		NSFWFilter:      nsfwFilter,
+		MediaFilter:     mediaFilter,
+		ShowImages:      mediaFilter != mediaTypeVideo,
+		ShowVideos:      mediaFilter != mediaTypeImage,
 		Models:          models,
 		OthersCount:     othersCount,
 		InitialURL:      initialURL,
@@ -431,6 +546,7 @@ type ImageSearchParams struct {
 	Limit       int
 	NSFWFilter  string
 	ModelFilter string
+	MediaFilter string
 	PromptQuery string
 }
 
@@ -441,6 +557,7 @@ func parseImageSearchParams(r *http.Request) ImageSearchParams {
 		Limit:       300,
 		NSFWFilter:  r.URL.Query().Get("nsfw"),
 		ModelFilter: r.URL.Query().Get("model"),
+		MediaFilter: normalizeMediaFilter(r.URL.Query().Get("media")),
 		PromptQuery: r.URL.Query().Get("q"),
 	}
 
@@ -466,6 +583,30 @@ func nsfwFilterConditionForAlias(filter, alias string) string {
 
 func nsfwFilterCondition(filter string) string {
 	return nsfwFilterConditionForAlias(filter, "i")
+}
+
+// normalizeMediaFilter maps the segmented image/video toggle to a canonical
+// value. Both halves on (or neither) means "everything".
+func normalizeMediaFilter(filter string) string {
+	switch strings.ToLower(strings.TrimSpace(filter)) {
+	case mediaTypeImage, "images":
+		return mediaTypeImage
+	case mediaTypeVideo, "videos":
+		return mediaTypeVideo
+	default:
+		return "all"
+	}
+}
+
+func mediaFilterCondition(filter string) string {
+	switch normalizeMediaFilter(filter) {
+	case mediaTypeImage:
+		return "i.media_type = 'image'"
+	case mediaTypeVideo:
+		return "i.media_type = 'video'"
+	default:
+		return ""
+	}
 }
 
 func modelFilterCondition(modelFilter, nsfwFilter string) (string, []any) {
@@ -510,6 +651,11 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 		args = append(args, modelArgs...)
 	}
 
+	// Media type filter (images / videos segmented toggle)
+	if condition := mediaFilterCondition(params.MediaFilter); condition != "" {
+		whereConditions = append(whereConditions, condition)
+	}
+
 	// Prompt search (only positive prompts)
 	if params.PromptQuery != "" {
 		whereConditions = append(whereConditions, "i.prompt LIKE ?")
@@ -546,6 +692,7 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 		           ELSE 'Unknown Model'
 		       END as model_display,
 		       i.prompt, i.neg_prompt, i.steps, i.cfg_scale, i.sampler, i.scheduler, i.seed, i.thumbnail_path, i.is_nsfw,
+		       i.media_type, i.duration, i.has_audio,
 		       l.name as lora_name, l.weight as lora_weight
 		FROM images i
 		LEFT JOIN models m ON i.model_id = m.id
@@ -576,6 +723,7 @@ func (app *App) queryImages(params ImageSearchParams) ([]ImageMetadata, int, err
 		err := rows.Scan(&img.ID, &img.Filename, &img.Width, &img.Height,
 			&img.Model, &img.Prompt, &img.NegPrompt, &img.Steps, &img.CFGScale,
 			&img.Sampler, &img.Scheduler, &img.Seed, &img.ThumbnailPath, &img.IsNSFW,
+			&img.MediaType, &img.Duration, &img.HasAudio,
 			&loraName, &loraWeight)
 		if err != nil {
 			log.Printf("Error scanning row: %v", err)
@@ -643,7 +791,7 @@ func (app *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) handleModelStats(w http.ResponseWriter, r *http.Request) {
-	models, othersCount, err := app.getModelStats(r.URL.Query().Get("nsfw"))
+	models, othersCount, err := app.getModelStats(r.URL.Query().Get("nsfw"), r.URL.Query().Get("media"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -795,15 +943,10 @@ func (app *App) handleToggleCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) moveImageFiles(filename string, fromNSFW, toNSFW bool) error {
-	// Determine source and destination directories
-	var sourceDir, destDir string
-	if fromNSFW {
-		sourceDir = "images_nsfw"
-		destDir = "images"
-	} else {
-		sourceDir = "images"
-		destDir = "images_nsfw"
-	}
+	// Determine source and destination directories. Videos have their own pair
+	// of libraries, so the media type decides which pair we move between.
+	sourceDir := mediaDirForFilename(filename, fromNSFW)
+	destDir := mediaDirForFilename(filename, toNSFW)
 
 	// Ensure destination directory exists
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -987,6 +1130,26 @@ func (app *App) fixCivitaiTimestamps() (int, error) {
 	return updatedCount, nil
 }
 
+// indexedVideoFilenames lists every video currently in the database.
+func (app *App) indexedVideoFilenames() ([]string, error) {
+	rows, err := app.db.Query("SELECT filename FROM images WHERE media_type = ? ORDER BY id", mediaTypeVideo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var filenames []string
+	for rows.Next() {
+		var filename string
+		if err := rows.Scan(&filename); err != nil {
+			return nil, err
+		}
+		filenames = append(filenames, filename)
+	}
+
+	return filenames, rows.Err()
+}
+
 // fixImageMetadata re-processes metadata for specific images
 func (app *App) fixImageMetadata(filenames []string) (int, error) {
 	fmt.Printf("Starting metadata fix for %d images...\n", len(filenames))
@@ -1005,16 +1168,15 @@ func (app *App) fixImageMetadata(filenames []string) (int, error) {
 			continue
 		}
 
-		// Determine the image path
-		var imagePath string
-		if isNSFW {
-			imagePath = "images_nsfw/" + filename
-		} else {
-			imagePath = "images/" + filename
+		// Determine the media path
+		mediaPath, found := findMediaPath(filename)
+		if !found {
+			fmt.Printf("Error: File for %s not found in any media library\n", filename)
+			continue
 		}
 
 		// Re-extract metadata
-		metadata, err := app.extractImageMetadata(imagePath, isNSFW)
+		metadata, err := app.extractMediaMetadata(mediaPath, isNSFW)
 		if err != nil {
 			fmt.Printf("Error: Failed to extract metadata for %s: %v\n", filename, err)
 			continue
@@ -1023,12 +1185,18 @@ func (app *App) fixImageMetadata(filenames []string) (int, error) {
 		// Update the database with new metadata
 		updateQuery := `UPDATE images SET
 			prompt = ?, neg_prompt = ?, steps = ?, cfg_scale = ?,
-			sampler = ?, scheduler = ?, seed = ?, model_hash = ?
+			sampler = ?, scheduler = ?, seed = ?, model_hash = ?,
+			model_id = COALESCE(?, model_id),
+			width = ?, height = ?, media_type = ?, duration = ?, has_audio = ?,
+			thumbnail_path = ?
 			WHERE id = ?`
 
 		_, err = app.db.Exec(updateQuery,
 			metadata.Prompt, metadata.NegPrompt, metadata.Steps, metadata.CFGScale,
 			metadata.Sampler, metadata.Scheduler, metadata.Seed, metadata.ModelHash,
+			metadata.ModelID,
+			metadata.Width, metadata.Height, metadata.MediaType, metadata.Duration, metadata.HasAudio,
+			metadata.ThumbnailPath,
 			imageID)
 		if err != nil {
 			fmt.Printf("Error: Failed to update database for %s: %v\n", filename, err)

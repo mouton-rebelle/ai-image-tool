@@ -149,11 +149,40 @@ func (app *App) initDB() error {
 		}
 	}
 
+	// Migration: media columns, added when video support landed. Existing rows
+	// are all images, which is what the default backfills.
+	app.addColumnIfMissing("images", "media_type", "TEXT NOT NULL DEFAULT 'image'")
+	app.addColumnIfMissing("images", "duration", "REAL NOT NULL DEFAULT 0")
+	app.addColumnIfMissing("images", "has_audio", "BOOLEAN NOT NULL DEFAULT FALSE")
+
+	if _, err := app.db.Exec("CREATE INDEX IF NOT EXISTS idx_media_type ON images(media_type)"); err != nil {
+		log.Printf("Warning: Failed to create media_type index: %v", err)
+	}
+
 	if err := app.sanitizeStoredImagePrompts(); err != nil {
 		log.Printf("Warning: Failed to sanitize stored prompts: %v", err)
 	}
 
 	return nil
+}
+
+// addColumnIfMissing adds a column when it isn't there yet, so the schema can
+// evolve without a migration tool.
+func (app *App) addColumnIfMissing(table, column, definition string) {
+	if app.columnExists(table, column) {
+		return
+	}
+
+	statement := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)
+	if _, err := app.db.Exec(statement); err != nil {
+		if strings.Contains(err.Error(), "duplicate column name") {
+			return
+		}
+		log.Printf("Warning: Failed to add %s.%s column: %v", table, column, err)
+		return
+	}
+
+	log.Printf("Added column %s.%s", table, column)
 }
 
 func (app *App) columnExists(tableName, columnName string) bool {
@@ -409,6 +438,45 @@ func (app *App) getOrCreateModel(hash string) (*Model, error) {
 	return apiModel, nil
 }
 
+// getOrCreateLocalModel registers a checkpoint we only know by filename, which
+// is the case for anything generated locally in ComfyUI. Civitai is never
+// queried for these: the synthetic hash keeps them out of the API lookup path
+// while still giving them a row so they show up in the model filter.
+func (app *App) getOrCreateLocalModel(name string) (*Model, error) {
+	cleanName := strings.TrimSpace(name)
+	if cleanName == "" {
+		return nil, fmt.Errorf("empty model name")
+	}
+
+	hash := "local:" + cleanName
+
+	var model Model
+	err := app.db.QueryRow("SELECT id, hash, name, version_name, type, nsfw, description, base_model, created_at FROM models WHERE hash = ?", hash).Scan(
+		&model.ID, &model.Hash, &model.Name, &model.VersionName, &model.Type, &model.NSFW, &model.Description, &model.BaseModel, &model.CreatedAt)
+	if err == nil {
+		return &model, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, fmt.Errorf("database error: %v", err)
+	}
+
+	result, err := app.db.Exec(
+		"INSERT INTO models (hash, name, version_name, type, nsfw, description, base_model) VALUES (?, ?, '', 'Checkpoint', 0, '', '')",
+		hash, cleanName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert local model: %v", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get local model ID: %v", err)
+	}
+
+	log.Printf("Created local model: %s (ID: %d)", cleanName, id)
+	return &Model{ID: int(id), Hash: hash, Name: cleanName, Type: "Checkpoint"}, nil
+}
+
 func (app *App) insertImageMetadata(metadata *ImageMetadata) error {
 	metadata.Prompt = sanitizePromptForStorage(metadata.Prompt)
 	metadata.NegPrompt = sanitizePromptForStorage(metadata.NegPrompt)
@@ -433,9 +501,13 @@ func (app *App) insertImageMetadata(metadata *ImageMetadata) error {
 		}
 	}
 
+	if metadata.MediaType == "" {
+		metadata.MediaType = mediaTypeForFilename(metadata.Filename)
+	}
+
 	query := `
-	INSERT INTO images (id, filename, width, height, model_id, model_hash, prompt, neg_prompt, steps, cfg_scale, sampler, scheduler, seed, thumbnail_path, is_nsfw, display_timestamp)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO images (id, filename, width, height, model_id, model_hash, prompt, neg_prompt, steps, cfg_scale, sampler, scheduler, seed, thumbnail_path, is_nsfw, display_timestamp, media_type, duration, has_audio)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := app.db.Exec(query,
@@ -455,6 +527,9 @@ func (app *App) insertImageMetadata(metadata *ImageMetadata) error {
 		metadata.ThumbnailPath,
 		metadata.IsNSFW,
 		metadata.DisplayTimestamp,
+		metadata.MediaType,
+		metadata.Duration,
+		metadata.HasAudio,
 	)
 
 	if err != nil {
@@ -499,10 +574,18 @@ func (app *App) insertLoraData(imageID int, loras []LoraData) error {
 	return nil
 }
 
-func (app *App) getModelStats(nsfwFilter string) ([]ModelStat, int, error) {
-	whereClause := ""
+func (app *App) getModelStats(nsfwFilter, mediaFilter string) ([]ModelStat, int, error) {
+	var conditions []string
 	if condition := nsfwFilterCondition(nsfwFilter); condition != "" {
-		whereClause = "WHERE " + condition
+		conditions = append(conditions, condition)
+	}
+	if condition := mediaFilterCondition(mediaFilter); condition != "" {
+		conditions = append(conditions, condition)
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
 	query := `

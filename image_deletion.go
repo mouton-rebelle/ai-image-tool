@@ -108,11 +108,7 @@ func (app *App) deleteImage(imageID int) (bool, error) {
 		return false, errors.New("image has an invalid filename")
 	}
 
-	paths := []string{
-		filepath.Join("images", filename),
-		filepath.Join("images_nsfw", filename),
-		filepath.Join("thumbnails", filename),
-	}
+	paths := append(mediaCandidatePaths(filename), thumbnailPathFor(filename))
 	stagedFiles, err := stageFilesForDeletion(paths)
 	if err != nil {
 		return false, err

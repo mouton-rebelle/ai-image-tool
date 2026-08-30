@@ -5,7 +5,7 @@
     <title>{{.Title}}</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/masonry-layout@4/dist/masonry.pkgd.min.js"></script>
-    <link rel="stylesheet" href="/static/styles.css?v=20260725-prompt-height">
+    <link rel="stylesheet" href="/static/styles.css?v=20260830-video">
 </head>
 <body>
     <div class="container">
@@ -22,9 +22,28 @@
                         {{if gt .OthersCount 0}}
                             <option value="OTHERS"{{if .OthersSelected}} selected{{end}}>Others ({{.OthersCount}})</option>
                         {{end}}
-                    </select>
+                        </select>
+                    <div class="media-toggle" role="group" aria-label="Filter by media type">
+                        <button type="button" class="media-toggle-btn{{if .ShowImages}} active{{end}}"
+                                data-media-type="image" aria-pressed="{{.ShowImages}}" title="Images"
+                                onclick="toggleMediaType('image')">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 13.4h16v-1.6l-4.6-5.4-3.2 3.9-2.4-2.6L4 17v.4Zm4.4-7a1.9 1.9 0 1 0 0-3.8 1.9 1.9 0 0 0 0 3.8Z"/>
+                            </svg>
+                            <span class="visually-hidden">Images</span>
+                        </button>
+                        <button type="button" class="media-toggle-btn{{if .ShowVideos}} active{{end}}"
+                                data-media-type="video" aria-pressed="{{.ShowVideos}}" title="Videos"
+                                onclick="toggleMediaType('video')">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h8A2.5 2.5 0 0 1 16 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 3 17.5v-11Zm15 4.1 3.2-2.2a.6.6 0 0 1 .9.5v6.2a.6.6 0 0 1-.9.5L18 13.4v-2.8Z"/>
+                            </svg>
+                            <span class="visually-hidden">Videos</span>
+                        </button>
+                    </div>
                 </div>
                 <input type="hidden" name="nsfw" id="nsfw-filter" value="{{.NSFWFilter}}">
+                <input type="hidden" name="media" id="media-filter" value="{{.MediaFilter}}">
                 <input type="hidden" name="page" value="1">
                 <div class="search-actions">
                     <button type="submit" class="search-btn">Search</button>
@@ -56,6 +75,7 @@
         <span class="lightbox-next">&#10095;</span>
         <div class="lightbox-content">
             <img id="lightbox-img" src="" alt="">
+            <video id="lightbox-video" controls loop playsinline preload="metadata" hidden></video>
             <div class="lightbox-metadata">
                 <div class="lightbox-model-info">
                     <h3 id="lightbox-model"></h3>
@@ -138,9 +158,10 @@
         if (!modelSelect) return;
 
         const selectedModel = modelSelect.value;
+        const media = window.currentMediaFilter || 'all';
 
         try {
-            const response = await fetch(`/api/models?nsfw=${encodeURIComponent(filter)}`);
+            const response = await fetch(`/api/models?nsfw=${encodeURIComponent(filter)}&media=${encodeURIComponent(media)}`);
             if (!response.ok) {
                 throw new Error(`Model statistics request failed with status ${response.status}`);
             }
@@ -205,26 +226,9 @@
         const promptValue = promptInput.value;
         const modelValue = modelSelect.value;
 
-        let url;
-        const params = new URLSearchParams();
-        params.set('page', '1');
-
-        // Always set nsfw parameter to preserve filter state
-        params.set('nsfw', filter);
-
-        if (promptValue.trim() !== '') {
-            params.set('q', promptValue);
-        }
-
-        if (modelValue !== 'all') {
-            params.set('model', modelValue);
-        }
-
-        if (params.get('q') || params.get('model')) {
-            url = `/search?${params.toString()}`;
-        } else {
-            url = `/api/images?${params.toString()}`;
-        }
+        window.currentSearch = promptValue;
+        window.currentModel = modelValue;
+        const url = window.gridURL(1);
 
         // Reset and update the request
         const imageResults = document.getElementById('image-results');
@@ -252,7 +256,6 @@
         // Clear only prompt and model inputs (not NSFW filter)
         const promptInput = document.querySelector('.prompt-input');
         const modelSelect = document.querySelector('.model-select');
-        const nsfwFilter = document.getElementById('nsfw-filter');
 
         promptInput.value = '';
         modelSelect.value = 'all';
@@ -262,15 +265,8 @@
         window.currentSearch = '';
         window.currentPage = 1;
 
-        // Get current NSFW filter value
-        const currentNSFWFilter = nsfwFilter.value;
-
-        // Build URL with current NSFW filter
-        const params = new URLSearchParams();
-        params.set('page', '1');
-        params.set('nsfw', currentNSFWFilter);
-
-        const url = `/api/images?${params.toString()}`;
+        // Build URL with the filters we keep (NSFW and media type)
+        const url = window.gridURL(1);
 
         // Load images with current NSFW filter
         const imageResults = document.getElementById('image-results');
@@ -290,9 +286,8 @@
             swap: 'innerHTML'
         });
 
-        // Update URL to preserve NSFW filter
-        const newURL = currentNSFWFilter === 'all' ? '/' : `/?nsfw=${currentNSFWFilter}`;
-        history.replaceState(null, '', newURL);
+        // Update URL to preserve the NSFW and media filters
+        window.updateURL();
 
         // Update clear button state
         updateClearButtonState();
@@ -315,8 +310,90 @@
 
     // Initialize filter state (will be updated from form values)
     window.currentNSFWFilter = '{{.NSFWFilter}}';
+    window.currentMediaFilter = '{{.MediaFilter}}';
     window.currentModel = '{{if .OthersSelected}}OTHERS{{else if gt .SelectedModelID 0}}{{.SelectedModelID}}{{else}}all{{end}}';
     window.currentSearch = '{{.SearchQuery}}';
+
+    // Single source of truth for the grid query string, shared by the initial
+    // load, every filter change and the infinite-scroll trigger.
+    window.buildGridParams = function(page) {
+        const params = new URLSearchParams();
+        params.set('page', String(page || 1));
+        params.set('nsfw', window.currentNSFWFilter || 'sfw');
+
+        if (window.currentMediaFilter && window.currentMediaFilter !== 'all') {
+            params.set('media', window.currentMediaFilter);
+        }
+
+        if (window.currentSearch && window.currentSearch.trim() !== '') {
+            params.set('q', window.currentSearch.trim());
+        }
+
+        if (window.currentModel && window.currentModel !== 'all') {
+            params.set('model', window.currentModel);
+        }
+
+        return params;
+    };
+
+    window.gridURL = function(page) {
+        const params = window.buildGridParams(page);
+        const endpoint = (params.get('q') || params.get('model')) ? '/search' : '/api/images';
+        return `${endpoint}?${params.toString()}`;
+    };
+
+    // Reload the grid from scratch with the current filters.
+    window.reloadGrid = function() {
+        window.currentPage = 1;
+
+        const imageResults = document.getElementById('image-results');
+        const loadMore = document.getElementById('load-more');
+
+        imageResults.innerHTML = '<div class="loading">Loading images...</div>';
+        if (loadMore) {
+            loadMore.style.display = 'none';
+        }
+
+        htmx.ajax('GET', window.gridURL(1), {
+            target: '#image-results',
+            swap: 'innerHTML'
+        });
+    };
+
+    // Segmented image/video toggle. Both halves on means "everything"; turning
+    // the last one off would show nothing, so it snaps back on instead.
+    window.toggleMediaType = async function(type) {
+        const buttons = Array.from(document.querySelectorAll('.media-toggle-btn'));
+        const button = buttons.find(candidate => candidate.dataset.mediaType === type);
+        if (!button) return;
+
+        button.classList.toggle('active');
+        if (!buttons.some(candidate => candidate.classList.contains('active'))) {
+            button.classList.add('active');
+            return;
+        }
+
+        const active = buttons.filter(candidate => candidate.classList.contains('active'))
+            .map(candidate => candidate.dataset.mediaType);
+        buttons.forEach(candidate => {
+            candidate.setAttribute('aria-pressed', String(candidate.classList.contains('active')));
+        });
+
+        window.currentMediaFilter = active.length === 1 ? active[0] : 'all';
+
+        const mediaField = document.getElementById('media-filter');
+        if (mediaField) {
+            mediaField.value = window.currentMediaFilter;
+        }
+
+        // Model counts depend on the media types in view
+        const requestVersion = ++window.modelStatsRequestVersion;
+        await window.refreshModelOptions(window.currentNSFWFilter || 'sfw', requestVersion);
+        if (requestVersion !== window.modelStatsRequestVersion) return;
+
+        window.reloadGrid();
+        setTimeout(window.updateURL, 100);
+    };
 
     // Function to update URL with current search parameters
     window.updateURL = function() {
@@ -335,6 +412,10 @@
 
         if (window.currentNSFWFilter) {
             params.set('nsfw', window.currentNSFWFilter);
+        }
+
+        if (window.currentMediaFilter && window.currentMediaFilter !== 'all') {
+            params.set('media', window.currentMediaFilter);
         }
 
         const newURL = params.toString() ? `/?${params.toString()}` : '/';
@@ -360,13 +441,20 @@
         if (nsfwField) {
             window.currentNSFWFilter = nsfwField.value;
         }
+
+        const mediaField = document.getElementById('media-filter');
+        if (mediaField && mediaField.value) {
+            window.currentMediaFilter = mediaField.value;
+        }
     };
 
     // Update the image count in the header
     window.updateImageCount = function() {
         const countElement = document.getElementById('image-count');
         if (countElement && typeof window.totalCount !== 'undefined') {
-            let countText = `(${window.totalCount} images)`;
+            const nouns = { image: 'images', video: 'videos' };
+            const noun = nouns[window.currentMediaFilter] || 'items';
+            let countText = `(${window.totalCount} ${noun})`;
             if (window.currentSearch && window.currentSearch.trim() !== '') {
                 countText = `(${window.totalCount} results)`;
             }
@@ -390,6 +478,11 @@
             const nsfwField = document.getElementById('nsfw-filter');
             if (nsfwField && window.currentNSFWFilter) {
                 nsfwField.value = window.currentNSFWFilter;
+            }
+
+            const mediaField = document.getElementById('media-filter');
+            if (mediaField && window.currentMediaFilter) {
+                mediaField.value = window.currentMediaFilter;
             }
 
             // Capture current model selection
@@ -487,7 +580,9 @@
                 prompt: window.decodeHtmlEntities(link.getAttribute('data-prompt') || ''),
                 negPrompt: window.decodeHtmlEntities(link.getAttribute('data-neg-prompt') || ''),
                 loras: link.getAttribute('data-loras') || '',
-                is_nsfw: link.getAttribute('data-nsfw') === 'true'
+                is_nsfw: link.getAttribute('data-nsfw') === 'true',
+                mediaType: link.getAttribute('data-media-type') || 'image',
+                duration: link.getAttribute('data-duration') || ''
             };
         });
     };
@@ -506,6 +601,42 @@
         window.openLightbox(imageSrc, element.getAttribute('data-image-id'), model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras);
     };
 
+    // Show one media element or the other. Grid videos are muted; opening the
+    // lightbox is a deliberate click, so this is where the sound comes on.
+    window.setLightboxMedia = function(meta) {
+        const image = document.getElementById('lightbox-img');
+        const video = document.getElementById('lightbox-video');
+
+        video.pause();
+
+        if (!meta || meta.mediaType !== 'video') {
+            video.hidden = true;
+            video.removeAttribute('src');
+            video.load();
+            image.hidden = false;
+            image.src = meta ? meta.src : '';
+            return;
+        }
+
+        image.hidden = true;
+        image.removeAttribute('src');
+        video.hidden = false;
+        video.src = meta.src;
+        video.currentTime = 0;
+        video.muted = false;
+
+        const playback = video.play();
+        if (playback && playback.catch) {
+            // Some browsers still refuse unmuted autoplay; fall back rather
+            // than leaving a frozen first frame.
+            playback.catch(function() {
+                video.muted = true;
+                const retry = video.play();
+                if (retry && retry.catch) retry.catch(function() {});
+            });
+        }
+    };
+
     window.openLightbox = function(imageSrc, id, model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras) {
         // Build/update the image list
         window.buildLightboxImageList();
@@ -521,13 +652,19 @@
         }
 
         const lightbox = document.getElementById('lightbox');
-        const lightboxImg = document.getElementById('lightbox-img');
-        lightboxImg.src = imageSrc;
+        const currentMeta = window.lightboxMetadata[window.currentLightboxIndex] ||
+            { src: imageSrc, mediaType: 'image' };
+        window.setLightboxMedia(currentMeta);
 
         // Populate metadata
         window.populateLightboxMetadata(model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras);
 
         lightbox.classList.add('active');
+
+        // Nothing should keep playing (or making noise) behind the lightbox
+        if (window.VideoPlayback) {
+            window.VideoPlayback.pauseAll();
+        }
 
         // Prevent body scroll
         document.body.style.overflow = 'hidden';
@@ -631,6 +768,16 @@
         lightbox.classList.remove('active');
         window.resetDeleteImageControls();
 
+        const video = document.getElementById('lightbox-video');
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.hidden = true;
+
+        if (window.VideoPlayback) {
+            window.VideoPlayback.sync();
+        }
+
         // Restore body scroll
         document.body.style.overflow = '';
     };
@@ -640,11 +787,11 @@
 
         if (window.currentLightboxIndex > 0) {
             window.currentLightboxIndex--;
-            const lightboxImg = document.getElementById('lightbox-img');
-            lightboxImg.src = window.lightboxImages[window.currentLightboxIndex];
 
             // Update metadata for current image
             const metadata = window.lightboxMetadata[window.currentLightboxIndex];
+            window.setLightboxMedia(metadata ||
+                { src: window.lightboxImages[window.currentLightboxIndex], mediaType: 'image' });
             if (metadata) {
                 window.populateLightboxMetadata(metadata.model, metadata.steps, metadata.cfg, metadata.sampler, metadata.scheduler, metadata.seed, metadata.prompt, metadata.negPrompt, metadata.loras);
             }
@@ -658,11 +805,11 @@
 
         if (window.currentLightboxIndex < window.lightboxImages.length - 1) {
             window.currentLightboxIndex++;
-            const lightboxImg = document.getElementById('lightbox-img');
-            lightboxImg.src = window.lightboxImages[window.currentLightboxIndex];
 
             // Update metadata for current image
             const metadata = window.lightboxMetadata[window.currentLightboxIndex];
+            window.setLightboxMedia(metadata ||
+                { src: window.lightboxImages[window.currentLightboxIndex], mediaType: 'image' });
             if (metadata) {
                 window.populateLightboxMetadata(metadata.model, metadata.steps, metadata.cfg, metadata.sampler, metadata.scheduler, metadata.seed, metadata.prompt, metadata.negPrompt, metadata.loras);
             }
@@ -1182,6 +1329,10 @@
         e.stopPropagation();
     });
 
+    document.getElementById('lightbox-video').addEventListener('click', function(e) {
+        e.stopPropagation();
+    });
+
     document.querySelector('.lightbox-metadata').addEventListener('click', function(e) {
         e.stopPropagation();
     });
@@ -1226,6 +1377,94 @@
         }
     });
 
+    // Grid videos play only while they are on screen. A masonry page holds
+    // hundreds of cards; decoding every video at once is what makes it crawl.
+    window.VideoPlayback = (function() {
+        const PRELOAD_MARGIN = 150;
+        let observer = null;
+        let suspended = false;
+
+        function start(video) {
+            if (suspended) return;
+            // The source is attached on first approach, so off-screen videos
+            // never cost a network request.
+            if (!video.getAttribute('src') && video.dataset.src) {
+                video.setAttribute('src', video.dataset.src);
+            }
+            const playback = video.play();
+            if (playback && playback.catch) {
+                playback.catch(function() {});
+            }
+        }
+
+        function ensureObserver() {
+            if (observer) return observer;
+
+            observer = new IntersectionObserver(function(entries) {
+                entries.forEach(function(entry) {
+                    if (entry.isIntersecting) {
+                        start(entry.target);
+                    } else {
+                        entry.target.pause();
+                    }
+                });
+            }, { rootMargin: PRELOAD_MARGIN + 'px 0px', threshold: 0 });
+
+            return observer;
+        }
+
+        function observeAll(root) {
+            const scope = root || document;
+            scope.querySelectorAll('video.grid-video:not([data-playback-observed])')
+                .forEach(function(video) {
+                    video.setAttribute('data-playback-observed', 'true');
+                    ensureObserver().observe(video);
+                });
+        }
+
+        function release(root) {
+            if (!root || !root.querySelectorAll) return;
+            root.querySelectorAll('video.grid-video').forEach(function(video) {
+                video.pause();
+                if (observer) observer.unobserve(video);
+            });
+        }
+
+        function pauseAll() {
+            suspended = true;
+            document.querySelectorAll('video.grid-video').forEach(function(video) {
+                video.pause();
+            });
+        }
+
+        // The observer only reports *changes*, and cards start out with no
+        // height at all until masonry has laid them out. This asks the layout
+        // directly what is on screen, which is what makes the first paint and
+        // the return from the lightbox behave.
+        function sync() {
+            suspended = false;
+            document.querySelectorAll('video.grid-video').forEach(function(video) {
+                const box = video.getBoundingClientRect();
+                const onScreen = box.height > 0 &&
+                    box.bottom > -PRELOAD_MARGIN &&
+                    box.top < window.innerHeight + PRELOAD_MARGIN;
+
+                if (onScreen) {
+                    start(video);
+                } else {
+                    video.pause();
+                }
+            });
+        }
+
+        return {
+            observeAll: observeAll,
+            release: release,
+            pauseAll: pauseAll,
+            sync: sync
+        };
+    })();
+
     // Global Masonry Manager for single unified grid with infinite scroll
     window.MasonryManager = (function() {
         let masonryInstance = null;
@@ -1235,6 +1474,17 @@
         let globalResizeTimeout;
         let resizeObserver;
         let resizeListenerAttached = false;
+
+        // Measure the space the grid has. Right after an HTMX swap the grid can
+        // still report zero, and laying out against that gives every card a
+        // width of 0px.
+        function measureGridWidth(grid) {
+            let width = grid.getBoundingClientRect().width;
+            if (width === 0 && grid.parentElement) {
+                width = grid.parentElement.getBoundingClientRect().width;
+            }
+            return width;
+        }
 
         // Calculate optimal column width based on container width
         function calculateColumnWidth(containerWidth) {
@@ -1253,7 +1503,7 @@
         }
 
         // Initialize masonry for the unified grid (called once on first page load)
-        function initializeGrid(grid) {
+        function initializeGrid(grid, attempt) {
             if (!grid) return;
 
             if (masonryInstance) {
@@ -1263,13 +1513,16 @@
                 destroyInstance();
             }
 
-            mainGrid = grid;
-
-            // Get the actual grid container width
-            let containerWidth = grid.getBoundingClientRect().width;
-            if (containerWidth === 0) {
-                containerWidth = grid.parentElement.getBoundingClientRect().width;
+            // Wait for the browser to give the grid a width before measuring.
+            const containerWidth = measureGridWidth(grid);
+            if (containerWidth === 0 && (attempt || 0) < 10) {
+                requestAnimationFrame(function() {
+                    initializeGrid(grid, (attempt || 0) + 1);
+                });
+                return;
             }
+
+            mainGrid = grid;
 
             const { columnWidth } = calculateColumnWidth(containerWidth);
 
@@ -1294,6 +1547,12 @@
 
                 // Set up resize observer
                 setupResizeObserver();
+
+                // Cards only get their real height here, so this is the first
+                // moment we can tell which videos are actually on screen.
+                if (window.VideoPlayback) {
+                    window.VideoPlayback.sync();
+                }
 
                 console.log('Masonry instance initialized');
 
@@ -1339,12 +1598,7 @@
 
             console.log('Appending', newCards.length, 'new items to Masonry');
 
-            // Get current column width
-            let containerWidth = mainGrid.getBoundingClientRect().width;
-            if (containerWidth === 0) {
-                containerWidth = mainGrid.parentElement.getBoundingClientRect().width;
-            }
-            const { columnWidth } = calculateColumnWidth(containerWidth);
+            const { columnWidth } = calculateColumnWidth(measureGridWidth(mainGrid));
 
             // Set width for new cards
             newCards.forEach(card => {
@@ -1365,6 +1619,10 @@
 
                 // Force layout update
                 masonryInstance.layout();
+
+                if (window.VideoPlayback) {
+                    window.VideoPlayback.sync();
+                }
 
                 console.log('New items appended and layout updated');
             }
@@ -1393,6 +1651,10 @@
         function removeItem(item) {
             if (!item) return;
 
+            if (window.VideoPlayback) {
+                window.VideoPlayback.release(item);
+            }
+
             if (masonryInstance && mainGrid && mainGrid.contains(item)) {
                 masonryInstance.remove(item);
                 masonryInstance.layout();
@@ -1407,19 +1669,17 @@
             clearTimeout(globalResizeTimeout);
             globalResizeTimeout = setTimeout(() => {
                 if (masonryInstance && mainGrid && document.contains(mainGrid)) {
-                    // Get the actual grid container width
-                    let containerWidth = mainGrid.getBoundingClientRect().width;
-                    if (containerWidth === 0) {
-                        containerWidth = mainGrid.parentElement.getBoundingClientRect().width;
-                    }
-
-                    const { columnWidth } = calculateColumnWidth(containerWidth);
+                    const { columnWidth } = calculateColumnWidth(measureGridWidth(mainGrid));
 
                     // Update column widths for all cards
                     setColumnWidths(mainGrid, columnWidth);
 
                     // Relayout masonry
                     masonryInstance.layout();
+
+                    if (window.VideoPlayback) {
+                        window.VideoPlayback.sync();
+                    }
 
                     console.log('Masonry layout updated after resize');
                 }

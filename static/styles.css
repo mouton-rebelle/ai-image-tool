@@ -52,8 +52,70 @@ body {
 
 .search-inputs {
     display: grid;
-    grid-template-columns: 1fr 200px;
+    grid-template-columns: 1fr 200px auto;
     grid-gap: 10px;
+}
+
+/* Segmented image / video toggle. Both halves are on by default, so the grid
+   mixes stills and clips until you narrow it down. */
+.media-toggle {
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #f8f9fa;
+}
+
+.media-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    padding: 0;
+    border: none;
+    border-right: 1px solid #ddd;
+    background: transparent;
+    color: #98a2b3;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+
+.media-toggle-btn:last-child {
+    border-right: none;
+}
+
+.media-toggle-btn svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+}
+
+.media-toggle-btn:hover {
+    background: #e9ecef;
+    color: #475467;
+}
+
+.media-toggle-btn.active {
+    background: #007bff;
+    color: white;
+}
+
+.media-toggle-btn.active:hover {
+    background: #0069d9;
+    color: white;
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
 }
 
 .prompt-input {
@@ -143,8 +205,12 @@ body {
     }
 
     .search-inputs {
-        grid-template-columns: 1fr; /* Stack inputs vertically on mobile */
+        grid-template-columns: 1fr auto; /* Keep the media toggle beside the input */
         grid-gap: 10px;
+    }
+
+    .search-inputs .prompt-input {
+        grid-column: 1 / -1;
     }
 
     .search-form {
@@ -162,6 +228,42 @@ body {
     height: auto;
     display: block;
     cursor: pointer;
+}
+
+/* Videos reserve their height from the stored dimensions, so masonry can lay
+   the grid out before a single frame has been decoded. */
+.image-card .media-frame {
+    position: relative;
+    width: 100%;
+    background: #0f1a2b;
+}
+
+.image-card video {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    cursor: pointer;
+    background: #0f1a2b;
+}
+
+.image-card a {
+    position: relative;
+    display: block;
+}
+
+.media-badge {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.65);
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    pointer-events: none;
 }
 
 .image-card:hover {
@@ -289,12 +391,22 @@ body {
     background: rgba(0, 0, 0, 0.8);
 }
 
-.lightbox img {
+.lightbox img,
+.lightbox video {
     max-width: calc(100% - 350px);
     max-height: 95vh;
     object-fit: contain;
     cursor: default;
     flex-shrink: 1;
+}
+
+.lightbox video {
+    background: #000;
+    border-radius: 4px;
+}
+
+.lightbox [hidden] {
+    display: none;
 }
 
 .lightbox-content {
