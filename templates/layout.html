@@ -728,6 +728,8 @@
                     const loraElement = document.createElement('span');
                     loraElement.className = 'lora-item';
                     loraElement.textContent = `${name.trim()}: ${weight.trim()}`;
+                    // The chip is ellipsised, so keep the full name reachable
+                    loraElement.title = `${name.trim()}: ${weight.trim()}`;
                     lorasContainer.appendChild(loraElement);
                 }
             });

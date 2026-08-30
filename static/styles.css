@@ -498,6 +498,7 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+    min-width: 0;
 }
 
 .lora-item {
@@ -508,6 +509,11 @@ body {
     color: #ddd;
     font-family: monospace;
     border: 1px solid rgba(255, 255, 255, 0.2);
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .lightbox-prompts {
@@ -637,6 +643,7 @@ body {
 
 .prompt-loader {
     display: none;
+    flex: none;
     width: 12px;
     height: 12px;
     border: 2px solid rgba(255, 255, 255, 0.45);
