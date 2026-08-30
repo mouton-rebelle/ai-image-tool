@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Deno TypeScript application that fetches image metadata from the Civitai API, downloads images, and extracts cleaned positive and negative prompt pairs. It includes advanced prompt cleaning features like LoRA removal, excluded word filtering, and smart image downloading with resume capability.
 
+Videos (MP4/WebM) are first-class alongside images: they live in `videos/` and `videos_nsfw/`, are indexed in the same `images` table with `media_type = 'video'`, and are mixed into the same masonry grid.
+
 ## Technology Stack
 
 ### Data Collection (Deno)
@@ -19,6 +21,7 @@ This is a Deno TypeScript application that fetches image metadata from the Civit
 - **Web Framework**: Gorilla Mux
 - **Frontend**: HTMX with vanilla CSS + Masonry.js
 - **Image Processing**: Go imaging libraries (resize, EXIF)
+- **Video Processing**: `ffprobe` (dimensions, duration, container metadata) and `ffmpeg` (poster frames) — external binaries, required only for video support
 - **Layout**: Responsive masonry grid with infinite scroll
 
 ## Development Commands
@@ -65,6 +68,9 @@ CIVITAI_USERNAME=username ./ai-generated-image-viewer -import-civitai
 # Option 2: Using application flag
 ./ai-generated-image-viewer -clear-images
 
+# Re-read metadata for every indexed video (after improving the parsers)
+./ai-generated-image-viewer -reindex-videos
+
 # Access web interface
 open http://localhost:8081
 
@@ -99,12 +105,16 @@ Single-file architecture with TypeScript interfaces:
   - `prompts_nsfw.txt`: Text file with unique, cleaned NSFW prompt pairs (positive|||negative format)
   - `images/`: Directory containing downloaded SFW images with ID-based filenames
   - `images_nsfw/`: Directory containing downloaded NSFW images with ID-based filenames
+  - `videos/` and `videos_nsfw/`: Same, for video files
 - Supporting files:
   - `excluded_words.txt`: Comma-separated list of words to exclude from prompts
 
 ### 2. Web Interface Layer (Go)
 HTTP server with SQLite backend:
 
+- `media.go`: Media type classification, library directory resolution, thumbnail naming, and video content sniffing
+- `video.go`: `ffprobe`/`ffmpeg` wrappers (probe, poster frame, prompt frame) and hosted-generator identification
+- `comfy_workflow.go`: Parser for ComfyUI's API-format prompt graph (prompts, LoRAs, sampler settings, checkpoint)
 - `main.go`: Web server application containing:
   - SQLite database initialization and schema with NSFW support
   - EXIF metadata extraction with multiline prompt parsing
@@ -149,6 +159,16 @@ HTTP server with SQLite backend:
 - **Prompt Cleaning**: Removes LoRA tags and excluded words
 - **Metadata Extraction**: Captures generation parameters, statistics, and user data
 - **Smart Image Downloads**: Downloads images with ID-based naming and skip logic for resuming
+
+## Video Support
+
+- **Libraries**: Videos live in `videos/` and `videos_nsfw/`. On startup, any video found in the image libraries is moved across; one whose payload is a video but whose extension says otherwise (Civitai serves some clips from `.jpg` URLs) is renamed to match its container, because the browser refuses to play a video served as `image/jpeg`. Duplicate downloads go to `temp/` for review rather than being deleted.
+- **Schema**: The `images` table carries `media_type` (`image` / `video`), `duration` and `has_audio`. Existing rows default to `image`.
+- **Posters**: `ffmpeg` grabs a frame 0.5s in, scaled to the same 400x600 envelope as image thumbnails, stored as `thumbnails/{id}.jpg`. The `/thumbnails/` handler regenerates a missing poster or thumbnail from the source media, so the cache can be wiped safely.
+- **Metadata**: ComfyUI writes its API prompt graph into the container metadata (`prompt`, or a `{"prompt": ..., "workflow": ...}` envelope in the `comment` tag), and Civitai preserves it through its re-encode. `comfy_workflow.go` walks the graph: it resolves the prompt through the sampler's positive/negative inputs when there is a text encoder, and falls back to nodes carrying the prompt as a plain widget (MiniMax H3, Wan, LTXV). Checkpoints found this way are registered as local models (`hash = "local:<name>"`), so they never hit the Civitai API but still appear in the model filter.
+- **Hosted generators**: Grok Imagine leaves `Signature: <base64>` in the MP4 comment tag and Kling leaves an encrypted protobuf in `metadata0`. Neither is readable, but recognising them labels the clip with its generator instead of "Unknown Model".
+- **Playback**: Grid videos are muted, looping, and only load and play while on screen (`VideoPlayback` in `layout.html`, driven by an IntersectionObserver plus a layout-driven `sync()` after each masonry pass). The lightbox plays with sound and controls; opening it pauses the grid.
+- **Layout**: Video cards carry an inline `aspect-ratio` from the stored dimensions, so masonry reserves the right height before a frame is decoded.
 
 ## API Integration
 
@@ -218,8 +238,8 @@ The application integrates with Civitai's REST API v1:
 - `/api/images`: Paginated image listing (JSON/HTML hybrid)
 - `/search`: Search functionality across model and prompt fields
 - `/api/comfy/generate-prompt`: Prompt generation for images outside the library (base64 image + prompt in, rewritten prompt out), used by the ComfyUI node in `comfyui/civitai_prompt_bridge/`
-- `/images/*`: Static file serving for full-resolution images
-- `/thumbnails/*`: Static file serving for generated thumbnails
+- `/images/*`, `/images_nsfw/*`, `/videos/*`, `/videos_nsfw/*`: Static file serving for full-resolution media
+- `/thumbnails/*`: Thumbnails and video posters, regenerated on demand when the file is missing
 
 ### Performance Features
 - **Automatic thumbnail generation**: Creates 400x600px max thumbnails with Lanczos3 resampling

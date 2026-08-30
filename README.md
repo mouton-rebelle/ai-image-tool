@@ -14,6 +14,10 @@ One of my usage of Civitai is to save the generated image I like, and I fear the
 2. **Civitai Import**: Import images and prompts from Civitai, allowing you to backup your favorite AI-generated content locally. It will download the images, and save the prompts to txt file. I use the prompts file in ComfyUI, picking a random prompt from my past image when I lack inspiration / want to test a new model. 
 
 
+3. **Videos**: MP4/WebM clips are indexed alongside the stills. They play muted in the masonry grid (only while on screen), with sound in the lightbox, and the segmented image/video toggle in the search bar narrows the grid to one or the other. ComfyUI writes its workflow into the container metadata, so a locally generated clip keeps its prompt, seed, sampler, checkpoint and LoRAs — and Civitai preserves those tags on the videos it re-encodes. Hosted generators (Grok Imagine, Kling) leave only an opaque provenance blob, which is enough to label the clip with the tool that made it.
+
+> Video support needs `ffmpeg` and `ffprobe` on the `PATH`. Without them, videos are skipped and everything else works as before.
+
 ## Download
 
 ### Pre-built Binaries
@@ -146,10 +150,11 @@ Import images and prompts directly from Civitai:
 ### Command Line Options
 
 ```bash
-./ai-generated-image-viewer                # Run web server
+./ai-generated-image-viewer                 # Run web server
 ./ai-generated-image-viewer -import-civitai # Import from Civitai
-./ai-generated-image-viewer -clear-images  # Clear database
-./ai-generated-image-viewer -help          # Show help
+./ai-generated-image-viewer -clear-images   # Clear database
+./ai-generated-image-viewer -reindex-videos # Re-read metadata for every indexed video
+./ai-generated-image-viewer -help           # Show help
 ```
 
 ## Configuration
@@ -168,8 +173,10 @@ Import images and prompts directly from Civitai:
 ```
 ai-generated-image-viewer/
 ├── images/                # SFW images
-├── images_nsfw/           # NSFW images  
-├── thumbnails/            # Auto-generated thumbnails
+├── images_nsfw/           # NSFW images
+├── videos/                # SFW videos
+├── videos_nsfw/           # NSFW videos
+├── thumbnails/            # Auto-generated thumbnails and video posters
 ├── images.db              # SQLite database
 ├── prompts_sfw.txt        # SFW prompts (import output)
 ├── prompts_nsfw.txt       # NSFW prompts (import output)
@@ -183,6 +190,7 @@ ai-generated-image-viewer/
 - **Backend**: Go with Gorilla Mux and SQLite
 - **Frontend**: HTMX with vanilla CSS
 - **Image Processing**: Automatic thumbnail generation and EXIF parsing
+- **Video Processing**: `ffprobe` for dimensions and container metadata, `ffmpeg` for poster frames
 - **Database**: SQLite with automatic schema creation
 - **API**: RESTful endpoints for search and pagination
 
