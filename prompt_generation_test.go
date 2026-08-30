@@ -432,3 +432,39 @@ func writePromptTestImage(t *testing.T, path string, width, height int) {
 		t.Fatalf("encode image: %v", err)
 	}
 }
+
+func TestPromptGenerationUserText(t *testing.T) {
+	tests := []struct {
+		name         string
+		sourcePrompt string
+		steering     string
+		want         string
+	}{
+		{
+			name:         "prompt only",
+			sourcePrompt: "  a lighthouse at dusk  ",
+			want:         "Source prompt:\na lighthouse at dusk",
+		},
+		{
+			name:         "prompt and steering",
+			sourcePrompt: "a lighthouse at dusk",
+			steering:     "make it a storm",
+			want:         "Source prompt:\na lighthouse at dusk\n\nUser creative direction:\nmake it a storm",
+		},
+		{
+			// Images without a recorded prompt are still worth remixing: the
+			// model can see the picture.
+			name:     "no prompt",
+			steering: "make it a storm",
+			want:     "Source prompt:\n(no prompt provided — work from the image alone)\n\nUser creative direction:\nmake it a storm",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := promptGenerationUserText(tt.sourcePrompt, tt.steering); got != tt.want {
+				t.Errorf("promptGenerationUserText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

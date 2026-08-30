@@ -357,7 +357,14 @@ func promptChatMessages(input PromptGenerationInput) []chatCompletionRequestMess
 }
 
 func promptGenerationUserText(sourcePrompt, steering string) string {
-	text := "Source prompt:\n" + strings.TrimSpace(sourcePrompt)
+	// An image with no recorded prompt is still worth remixing: most of the
+	// signal comes from looking at the image itself.
+	sourcePrompt = strings.TrimSpace(sourcePrompt)
+	if sourcePrompt == "" {
+		sourcePrompt = "(no prompt provided — work from the image alone)"
+	}
+
+	text := "Source prompt:\n" + sourcePrompt
 	if steering = strings.TrimSpace(steering); steering != "" {
 		text += "\n\nUser creative direction:\n" + steering
 	}
@@ -444,10 +451,6 @@ func (app *App) handleGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("Failed to load prompt for image %d: %v", request.ImageID, err)
 		writeGeneratePromptJSON(w, http.StatusInternalServerError, generatePromptResponse{Error: "The image prompt could not be loaded"})
-		return
-	}
-	if strings.TrimSpace(sourcePrompt) == "" {
-		writeGeneratePromptJSON(w, http.StatusUnprocessableEntity, generatePromptResponse{Error: "This image has no prompt to remix"})
 		return
 	}
 	imagePath, err := app.promptImagePath(filename, isNSFW)
