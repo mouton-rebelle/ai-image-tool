@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H3 Prompt Builder</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="logo">H3</span><span>Prompt Builder</span></div>
+  <div class="topbar-right">
+    <span class="inline-label">Length</span>
+    <select id="duration"></select>
+    <span class="hint" id="duration-hint"></span>
+    <div class="seg" id="lang" data-tip="Language of the spoken lines. Switching it retags every line already written, and the lines themselves are left untouched.">
+      <button type="button" data-lang="English" class="on">EN</button>
+      <button type="button" data-lang="French">FR</button>
+    </div>
+  </div>
+</header>
+
+<main class="split">
+
+  <section class="pane builder">
+
+    <div class="block">
+      <div class="block-head">
+        <h2>Subjects</h2>
+        <span class="info" data-tip="Anything that must stay consistent across the video: a person, a prop, a place. The name is a local alias used for @mentions — only the description reaches the prompt."></span>
+        <span class="badge-count" id="subject-count"></span>
+        <button type="button" class="btn btn-primary" id="add-subject">+ Subject</button>
+      </div>
+      <div class="subject-list" id="subject-list"></div>
+    </div>
+
+    <div class="block">
+      <div class="block-head">
+        <h2>References</h2>
+        <span class="info" data-tip="Reference images, source videos and audio tracks. Adding one makes it available to the &lt; autocomplete; describing it also gives it its own line in subject_definitions. Leave the description empty when the asset is only cited inside a subject."></span>
+        <span class="badge-count" id="asset-count"></span>
+        <span class="add-group">
+          <button type="button" class="btn" data-add-asset="Picture">+ Picture</button>
+          <button type="button" class="btn" data-add-asset="Video">+ Video</button>
+          <button type="button" class="btn" data-add-asset="Audio">+ Audio</button>
+        </span>
+      </div>
+      <div class="subject-list" id="asset-list"></div>
+    </div>
+
+    <div class="block">
+      <div class="block-head">
+        <h2>Summary</h2>
+        <span class="info" data-tip="One short paragraph summarizing the target video and how each reference asset is used, opening with a bracketed task-type prefix."></span>
+        <span class="badge-count" id="summary-count"></span>
+      </div>
+      <div class="stack">
+        <div class="multiselect" id="task-types">
+          <button type="button" class="ms-trigger" data-trigger aria-expanded="false" aria-haspopup="true">
+            <span class="ms-value" data-value></span>
+            <span class="ms-caret" aria-hidden="true">&#9662;</span>
+          </button>
+          <div class="ms-panel" data-panel hidden></div>
+        </div>
+        <textarea rows="3" id="summary-text"
+          placeholder="Type @ to reference a subject. The target video shows @tim walking through @arrakis as the light fades."></textarea>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="block-head">
+        <h2>Detailed description</h2>
+        <span class="info" data-tip="One or two style sentences, then the action beat by beat in playback order. Drag a beat by its handle to reorder. Shot 1 always opens without a timestamp; a later beat given a cut time can be turned into a new shot. Type @ to reference a subject, or &lt; for a spoken line and the reference assets."></span>
+        <span class="badge-count" id="beat-count"></span>
+        <button type="button" class="btn btn-primary" id="add-beat">+ Beat</button>
+      </div>
+      <div class="stack">
+        <textarea rows="2" id="style-opening"
+          placeholder="Style opening — the target video is in a cinematic, slightly desaturated style with hard desert light."></textarea>
+        <div class="beat-list" id="beat-list"></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="block-head">
+        <h2>Retention</h2>
+        <span class="info" data-tip="One line per subject: where it shows up, how much of it survives, and why. The shot list is derived from the @mentions in your beats. It lands before detailed_description in the output, as the guide orders it."></span>
+        <span class="badge-count" id="retention-count"></span>
+      </div>
+      <div class="subject-list" id="retention-list"></div>
+    </div>
+
+    <div class="block">
+      <div class="block-head">
+        <h2>Audio</h2>
+        <span class="info" data-tip="Ambience and physical sounds on one side, audience-only score on the other. Spoken lines stay in the beats and are never repeated here."></span>
+      </div>
+      <div class="stack">
+        <div class="field-row"><span class="field-label">overall_soundscape</span></div>
+        <textarea rows="2" id="soundscape"
+          placeholder="Steady surf and wind across the whole video, with sand hissing under each step."></textarea>
+        <div class="field-row">
+          <span class="field-label">non_diegetic_music</span>
+          <button type="button" class="chip" id="music-na" data-tip="No audience-only score in this clip.">N/A</button>
+        </div>
+        <textarea rows="2" id="music"
+          placeholder="A restrained solo-piano score at a slow tempo, with sustained low cello underneath."></textarea>
+      </div>
+    </div>
+
+  </section>
+
+  <section class="pane console">
+    <div class="console-head">
+      <h2>Prompt</h2>
+      <span class="badge-count" id="prompt-stats"></span>
+      <button type="button" class="btn" id="import" data-tip="Paste a full prompt back into the builder. Subject aliases come back as s1, s2 … — rename one and every mention follows.">Import</button>
+      <button type="button" class="btn" id="copy">Copy</button>
+    </div>
+    <div class="import-note" id="import-note" hidden></div>
+    <pre class="output" id="output"></pre>
+    <div class="import-panel" id="import-panel" hidden>
+      <div class="import-head">Paste a prompt</div>
+      <textarea id="import-text" spellcheck="false"
+        placeholder="Paste a prompt here — subject_definitions, summary and detailed_description are read back."></textarea>
+      <div class="import-foot">
+        <span class="import-warn">Replaces everything in the builder.</span>
+        <button type="button" class="btn" id="import-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="import-go">Import</button>
+      </div>
+    </div>
+    <div class="issues" id="issues"></div>
+  </section>
+
+</main>
+
+<script src="tips.js"></script>
+<script src="parse.js"></script>
+<script src="timeline.js"></script>
+<script src="mentions.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -364,6 +364,12 @@ func (app *App) setupRoutes(router *mux.Router) {
 	router.PathPrefix("/thumbnails/").HandlerFunc(app.handleThumbnail)
 	router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 
+	// Self-contained static tools, indexed at /tools/ and served under it.
+	router.HandleFunc("/tools", app.handleToolsIndex).Methods("GET")
+	router.HandleFunc("/tools/", app.handleToolsIndex).Methods("GET")
+	router.PathPrefix("/tools/").Handler(
+		http.StripPrefix("/tools/", http.FileServer(noListingDir{http.Dir("./" + toolsRoot + "/")})))
+
 	// API routes
 	router.HandleFunc("/", app.handleIndex).Methods("GET")
 	router.HandleFunc("/api/images", app.handleAPIImages).Methods("GET")

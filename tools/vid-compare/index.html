@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>vid-compare</title>
+  <style>
+    :root {
+      --bg: #09090b;
+      --panel: #111113;
+      --line: #26262b;
+      --text: #f4f4f5;
+      --muted: #8b8b93;
+      --accent: #d6ff3e;
+      --danger: #ff5c5c;
+      --gap: 6px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.4 "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    .app {
+      height: 100%;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+
+    header, footer {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 10px 14px;
+      background: var(--panel);
+      border-color: var(--line);
+      min-height: 48px;
+    }
+    header { border-bottom: 1px solid var(--line); }
+    footer { border-top: 1px solid var(--line); }
+
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      letter-spacing: -0.03em;
+    }
+    .brand b { font-size: 14px; font-weight: 650; }
+    .brand span { color: var(--muted); font-size: 12px; }
+
+    .hint { color: var(--muted); margin-left: auto; }
+    kbd {
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      border: 1px solid var(--line);
+      background: #1a1a1e;
+      padding: 2px 5px;
+      border-radius: 4px;
+      color: #c9c9cf;
+    }
+
+    .stage {
+      position: relative;
+      min-height: 0;
+      padding: var(--gap);
+      background: #050506;
+      display: grid;
+      place-items: center;
+    }
+
+    .grid {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-content: center;
+      gap: var(--gap);
+      max-width: 100%;
+      max-height: 100%;
+    }
+    .grid[data-count="0"] { display: none; }
+
+
+    .cell {
+      position: relative;
+      overflow: hidden;
+      background: #000;
+      border: 1px solid #1c1c20;
+      border-radius: 6px;
+      width: var(--cell-w, 320px);
+      height: var(--cell-h, 180px);
+      flex: 0 0 var(--cell-w, 320px);
+    }
+
+    .cell.is-hot {
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+
+    .viewport {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      cursor: grab;
+    }
+    .viewport.is-panning { cursor: grabbing; }
+
+    .zoom-layer {
+      width: 100%;
+      height: 100%;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+      display: block;
+      pointer-events: none;
+    }
+
+    .meta {
+      position: absolute;
+      left: 8px;
+      top: 8px;
+      right: 40px;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .name {
+      max-width: 70%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 3px 7px;
+      border-radius: 4px;
+      background: rgba(0,0,0,.62);
+      font-size: 11px;
+      color: #ececf0;
+    }
+    .sound-pill {
+      display: none;
+      padding: 3px 7px;
+      border-radius: 4px;
+      background: var(--accent);
+      color: #111;
+      font-weight: 650;
+      font-size: 10px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .cell.is-hot .sound-pill { display: inline-block; }
+
+    .kill {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 3;
+      width: 24px;
+      height: 24px;
+      border: 0;
+      border-radius: 4px;
+      background: rgba(0,0,0,.62);
+      color: #ddd;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 24px;
+      padding: 0;
+    }
+    .kill:hover { background: var(--danger); color: #fff; }
+
+    .empty {
+      position: absolute;
+      inset: var(--gap);
+      display: grid;
+      place-items: center;
+      border: 1.5px dashed #2d2d33;
+      border-radius: 12px;
+      color: var(--muted);
+      text-align: center;
+      transition: border-color .15s, background .15s;
+    }
+    .empty h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      letter-spacing: -0.04em;
+      color: var(--text);
+      font-weight: 600;
+    }
+    .empty p { margin: 0; max-width: 36ch; }
+    .stage.is-drag .empty,
+    .stage.is-drag .grid {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .empty.hidden { display: none; }
+
+    .file-btn {
+      margin-top: 16px;
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #1a1a1e;
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .file-btn:hover { border-color: #444; }
+
+    footer { gap: 10px; }
+    .transport {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+    }
+    button.ctrl, .zoom-read {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #1a1a1e;
+      color: var(--text);
+      height: 30px;
+      padding: 0 10px;
+      border-radius: 7px;
+      cursor: pointer;
+    }
+    button.ctrl:hover { border-color: #4a4a52; }
+    button.ctrl:disabled, .zoom-read:empty { opacity: .35; cursor: default; }
+
+    .scrub {
+      flex: 1;
+      min-width: 80px;
+      accent-color: var(--accent);
+    }
+    .time {
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      min-width: 92px;
+      text-align: right;
+    }
+    .zoom-read { display: grid; place-items: center; min-width: 58px; cursor: default; }
+
+    input[type="file"] { display: none; }
+
+    @media (max-width: 860px) {
+      .hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <b>vid-compare</b>
+        <span id="count-label">0 / 4</span>
+      </div>
+      <div class="hint">
+        drop 2–4 vidéos · hover = son · molette = zoom · drag = pan ·
+        <kbd>espace</kbd> lecture · <kbd>r</kbd> restart · <kbd>0</kbd> zoom
+      </div>
+      <button class="ctrl" id="add-btn" type="button">ajouter</button>
+    </header>
+
+    <div class="stage" id="stage">
+      <div class="empty" id="empty">
+        <div>
+          <h1>dépose 2 à 4 vidéos</h1>
+          <p>même ratio, lancées ensemble. un seul son à la fois, celui sous le curseur. le zoom est partagé.</p>
+          <button class="file-btn" id="empty-btn" type="button">choisir des fichiers</button>
+        </div>
+      </div>
+      <div class="grid" id="grid" data-count="0"></div>
+    </div>
+
+    <footer>
+      <div class="transport">
+        <button class="ctrl" id="play" type="button" disabled>lecture</button>
+        <button class="ctrl" id="restart" type="button" disabled>restart</button>
+        <input class="scrub" id="scrub" type="range" min="0" max="1000" value="0" disabled />
+        <span class="time" id="time">0:00 / 0:00</span>
+        <span class="zoom-read" id="zoom-read">100%</span>
+        <button class="ctrl" id="zoom-reset" type="button" disabled>reset zoom</button>
+        <button class="ctrl" id="clear" type="button" disabled>vider</button>
+      </div>
+    </footer>
+  </div>
+  <input id="picker" type="file" accept="video/*" multiple />
+
+  <script>
+    const MAX = 4;
+    const grid = document.getElementById("grid");
+    const stage = document.getElementById("stage");
+    const empty = document.getElementById("empty");
+    const picker = document.getElementById("picker");
+    const playBtn = document.getElementById("play");
+    const restartBtn = document.getElementById("restart");
+    const scrub = document.getElementById("scrub");
+    const timeEl = document.getElementById("time");
+    const zoomRead = document.getElementById("zoom-read");
+    const zoomReset = document.getElementById("zoom-reset");
+    const clearBtn = document.getElementById("clear");
+    const countLabel = document.getElementById("count-label");
+
+    /** @type {{id:number, file:File, url:string, video:HTMLVideoElement, cell:HTMLElement}[]} */
+    const slots = [];
+    let nextId = 1;
+    let playing = false;
+    let seeking = false;
+    let scale = 1;
+    let tx = 0;
+    let ty = 0;
+    let hotId = null;
+    let pan = null;
+
+    const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
+    const fmt = (s) => {
+      if (!Number.isFinite(s)) return "0:00";
+      s = Math.max(0, s);
+      const m = Math.floor(s / 60);
+      const sec = Math.floor(s % 60);
+      return `${m}:${String(sec).padStart(2, "0")}`;
+    };
+
+    function videos() {
+      return slots.map((s) => s.video);
+    }
+
+    function applyZoom() {
+      if (scale <= 1.001) {
+        scale = 1;
+        tx = 0;
+        ty = 0;
+      } else {
+        tx = clamp(tx, 1 - scale, 0);
+        ty = clamp(ty, 1 - scale, 0);
+      }
+      const t = `translate(${tx * 100}%, ${ty * 100}%) scale(${scale})`;
+      for (const slot of slots) {
+        slot.cell.querySelector(".zoom-layer").style.transform = t;
+      }
+      zoomRead.textContent = `${Math.round(scale * 100)}%`;
+    }
+
+    function zoomAt(rx, ry, next) {
+      const cx = (rx - tx) / scale;
+      const cy = (ry - ty) / scale;
+      scale = clamp(next, 1, 12);
+      tx = rx - cx * scale;
+      ty = ry - cy * scale;
+      applyZoom();
+    }
+
+    function setHot(id) {
+      hotId = id;
+      for (const slot of slots) {
+        const on = slot.id === id;
+        slot.cell.classList.toggle("is-hot", on);
+        slot.video.muted = !on;
+        slot.video.volume = 1;
+      }
+    }
+
+    function master() {
+      return slots[0]?.video ?? null;
+    }
+
+    function duration() {
+      const ds = videos().map((v) => v.duration).filter(Number.isFinite);
+      return ds.length ? Math.min(...ds) : 0;
+    }
+
+    function waitSeek(video) {
+      return new Promise((res) => {
+        const done = () => {
+          video.removeEventListener("seeked", done);
+          res();
+        };
+        video.addEventListener("seeked", done);
+        requestAnimationFrame(() => {
+          if (!video.seeking) done();
+        });
+        setTimeout(done, 400);
+      });
+    }
+
+    async function seekAll(t) {
+      const vs = videos();
+      for (const v of vs) v.pause();
+      for (const v of vs) v.currentTime = t;
+      await Promise.all(vs.map(waitSeek));
+    }
+
+    function syncFrom(src, force = false) {
+      const t = src.currentTime;
+      const slop = force ? 0.02 : 0.12;
+      for (const v of videos()) {
+        if (v === src) continue;
+        if (force || Math.abs(v.currentTime - t) > slop) v.currentTime = t;
+      }
+    }
+
+    async function playAll() {
+      const m = master();
+      if (!m) return;
+      playing = true;
+      playBtn.textContent = "pause";
+      await seekAll(m.currentTime);
+      await Promise.all(videos().map((v) => v.play().catch(() => {})));
+    }
+
+    function pauseAll() {
+      playing = false;
+      playBtn.textContent = "lecture";
+      for (const v of videos()) v.pause();
+      const m = master();
+      if (m) syncFrom(m, true);
+    }
+
+    async function restartAll() {
+      for (const v of videos()) v.pause();
+      await seekAll(0);
+      await playAll();
+    }
+
+    function updateChrome() {
+      const n = slots.length;
+      grid.dataset.count = String(n);
+      empty.classList.toggle("hidden", n > 0);
+      countLabel.textContent = `${n} / ${MAX}`;
+      const on = n > 0;
+      playBtn.disabled = !on;
+      restartBtn.disabled = !on;
+      scrub.disabled = !on;
+      zoomReset.disabled = !on;
+      clearBtn.disabled = !on;
+      playBtn.textContent = playing ? "pause" : "lecture";
+    }
+
+    function videoAspect() {
+      for (const v of videos()) {
+        if (v.videoWidth && v.videoHeight) return v.videoWidth / v.videoHeight;
+      }
+      return 16 / 9;
+    }
+
+    function layoutGrid() {
+      const n = slots.length;
+      if (!n) return;
+      const ar = videoAspect();
+      const gap = 6;
+      const availW = Math.max(0, stage.clientWidth - gap * 2);
+      const availH = Math.max(0, stage.clientHeight - gap * 2);
+      let best = { cols: n, rows: 1, w: 0, h: 0, area: -1 };
+      for (let cols = 1; cols <= n; cols++) {
+        const rows = Math.ceil(n / cols);
+        const maxW = (availW - gap * (cols - 1)) / cols;
+        const maxH = (availH - gap * (rows - 1)) / rows;
+        let w = maxW;
+        let h = w / ar;
+        if (h > maxH) {
+          h = maxH;
+          w = h * ar;
+        }
+        if (w < 1 || h < 1) continue;
+        const area = w * h;
+        if (area > best.area) best = { cols, rows, w, h, area };
+      }
+      grid.style.setProperty("--cell-w", `${best.w}px`);
+      grid.style.setProperty("--cell-h", `${best.h}px`);
+      grid.style.width = `${best.w * best.cols + gap * (best.cols - 1)}px`;
+    }
+
+
+    function tick() {
+      const m = master();
+      if (!m || seeking) return;
+      const d = duration();
+      if (d > 0) scrub.value = String(Math.round((m.currentTime / d) * 1000));
+      timeEl.textContent = `${fmt(m.currentTime)} / ${fmt(d)}`;
+      if (playing) syncFrom(m);
+    }
+
+    function bindVideo(slot) {
+      const { video, cell } = slot;
+      video.addEventListener("timeupdate", () => {
+        if (slot === slots[0]) tick();
+      });
+      video.addEventListener("ended", () => {
+        if (slot === slots[0]) {
+          for (const v of videos()) v.currentTime = 0;
+          if (playing) playAll();
+        }
+      });
+      cell.addEventListener("pointerenter", () => setHot(slot.id));
+      cell.addEventListener("pointerleave", () => {
+        if (hotId === slot.id) setHot(null);
+      });
+      const viewport = cell.querySelector(".viewport");
+      viewport.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const r = viewport.getBoundingClientRect();
+        const rx = (e.clientX - r.left) / r.width;
+        const ry = (e.clientY - r.top) / r.height;
+        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+        zoomAt(rx, ry, scale * factor);
+      }, { passive: false });
+      viewport.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        viewport.setPointerCapture(e.pointerId);
+        viewport.classList.add("is-panning");
+        pan = { x: e.clientX, y: e.clientY, tx, ty, w: viewport.clientWidth, h: viewport.clientHeight };
+      });
+      viewport.addEventListener("pointermove", (e) => {
+        if (!pan) return;
+        tx = pan.tx + (e.clientX - pan.x) / pan.w;
+        ty = pan.ty + (e.clientY - pan.y) / pan.h;
+        applyZoom();
+      });
+      const endPan = () => {
+        pan = null;
+        viewport.classList.remove("is-panning");
+      };
+      viewport.addEventListener("pointerup", endPan);
+      viewport.addEventListener("pointercancel", endPan);
+      viewport.addEventListener("dblclick", () => {
+        scale = 1;
+        applyZoom();
+      });
+    }
+
+    function renderSlot(slot) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.innerHTML = `
+        <div class="viewport">
+          <div class="zoom-layer">
+            <video playsinline loop></video>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="name"></span>
+          <span class="sound-pill">son</span>
+        </div>
+        <button class="kill" type="button" title="retirer">×</button>
+      `;
+      const video = cell.querySelector("video");
+      video.src = slot.url;
+      video.muted = true;
+      video.preload = "auto";
+      cell.querySelector(".name").textContent = slot.file.name;
+      cell.querySelector(".kill").addEventListener("click", (e) => {
+        e.stopPropagation();
+        removeSlot(slot.id);
+      });
+      cell.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      cell.addEventListener("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const file = [...(e.dataTransfer?.files || [])].find((f) => f.type.startsWith("video/"));
+        if (file) replaceSlot(slot.id, file);
+      });
+      slot.video = video;
+      slot.cell = cell;
+      grid.appendChild(cell);
+      bindVideo(slot);
+    }
+
+    function waitReady(video) {
+      if (video.readyState >= 1) return Promise.resolve();
+      return new Promise((res) => {
+        video.addEventListener("loadedmetadata", () => res(), { once: true });
+        video.addEventListener("error", () => res(), { once: true });
+      });
+    }
+
+    async function afterChange() {
+      updateChrome();
+      layoutGrid();
+      applyZoom();
+      setHot(hotId && slots.some((s) => s.id === hotId) ? hotId : null);
+      await Promise.all(videos().map(waitReady));
+      layoutGrid();
+      if (slots.length) await restartAll();
+      else {
+        playing = false;
+        timeEl.textContent = "0:00 / 0:00";
+        scrub.value = "0";
+      }
+    }
+
+    function addFiles(files) {
+      const vids = files.filter((f) => f.type.startsWith("video/") || /\.(mp4|webm|mov|mkv|m4v|avi)$/i.test(f.name));
+      const room = MAX - slots.length;
+      for (const file of vids.slice(0, room)) {
+        const slot = { id: nextId++, file, url: URL.createObjectURL(file), video: null, cell: null };
+        slots.push(slot);
+        renderSlot(slot);
+      }
+      afterChange();
+    }
+
+    function replaceSlot(id, file) {
+      const slot = slots.find((s) => s.id === id);
+      if (!slot) return;
+      URL.revokeObjectURL(slot.url);
+      slot.file = file;
+      slot.url = URL.createObjectURL(file);
+      slot.video.src = slot.url;
+      slot.cell.querySelector(".name").textContent = file.name;
+      afterChange();
+    }
+
+    function removeSlot(id) {
+      const i = slots.findIndex((s) => s.id === id);
+      if (i < 0) return;
+      const [slot] = slots.splice(i, 1);
+      slot.video.pause();
+      slot.video.removeAttribute("src");
+      slot.video.load();
+      URL.revokeObjectURL(slot.url);
+      slot.cell.remove();
+      afterChange();
+    }
+
+    function clearAll() {
+      while (slots.length) removeSlot(slots[0].id);
+    }
+
+    function takeDrops(e) {
+      e.preventDefault();
+      stage.classList.remove("is-drag");
+      addFiles([...(e.dataTransfer?.files || [])]);
+    }
+
+    stage.addEventListener("dragenter", (e) => { e.preventDefault(); stage.classList.add("is-drag"); });
+    stage.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+    stage.addEventListener("dragleave", (e) => {
+      if (!stage.contains(e.relatedTarget)) stage.classList.remove("is-drag");
+    });
+    stage.addEventListener("drop", takeDrops);
+
+    picker.addEventListener("change", () => {
+      addFiles([...picker.files]);
+      picker.value = "";
+    });
+    document.getElementById("add-btn").addEventListener("click", () => picker.click());
+    document.getElementById("empty-btn").addEventListener("click", () => picker.click());
+
+    playBtn.addEventListener("click", () => playing ? pauseAll() : playAll());
+    restartBtn.addEventListener("click", () => restartAll());
+    zoomReset.addEventListener("click", () => { scale = 1; applyZoom(); });
+    clearBtn.addEventListener("click", clearAll);
+
+    scrub.addEventListener("pointerdown", () => { seeking = true; });
+    scrub.addEventListener("input", () => {
+      const d = duration();
+      if (!d) return;
+      const t = (Number(scrub.value) / 1000) * d;
+      for (const v of videos()) v.currentTime = t;
+      timeEl.textContent = `${fmt(t)} / ${fmt(d)}`;
+    });
+    const endSeek = () => {
+      seeking = false;
+      if (playing) playAll();
+    };
+    scrub.addEventListener("pointerup", endSeek);
+    scrub.addEventListener("change", endSeek);
+
+    window.addEventListener("keydown", (e) => {
+      if (e.target.matches("input, textarea")) return;
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (slots.length) playing ? pauseAll() : playAll();
+      } else if (e.key === "r" || e.key === "R") {
+        restartAll();
+      } else if (e.key === "0") {
+        scale = 1;
+        applyZoom();
+      } else if (e.key === "+" || e.key === "=") {
+        zoomAt(0.5, 0.5, scale * 1.12);
+      } else if (e.key === "-" || e.key === "_") {
+        zoomAt(0.5, 0.5, scale / 1.12);
+      }
+    });
+
+    new ResizeObserver(layoutGrid).observe(stage);
+    updateChrome();
+  </script>
+</body>
+</html>
