@@ -82,9 +82,10 @@ func decodeComfyAPINodes(jsonText string) (comfyAPIGraph, bool) {
 	}
 
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
+	if err := json.Unmarshal([]byte(sanitizeBareFloats(trimmed)), &raw); err != nil {
 		return nil, false
 	}
+
 	if len(raw) == 0 {
 		return nil, false
 	}
@@ -102,6 +103,60 @@ func decodeComfyAPINodes(jsonText string) (comfyAPIGraph, bool) {
 	}
 
 	return graph, true
+}
+
+// sanitizeBareFloats replaces the non-standard float tokens ComfyUI writes in
+// some nodes (e.g. "is_changed": [NaN]) with null. Standard JSON has no bare
+// NaN or Infinity, so Go rejects the whole graph otherwise, and an unparsable
+// graph ends up dumped verbatim into the prompt field. The scan only touches
+// tokens outside quoted strings, so prompt text is never altered.
+func sanitizeBareFloats(jsonText string) string {
+	if !strings.Contains(jsonText, "NaN") && !strings.Contains(jsonText, "Infinity") {
+		return jsonText
+	}
+
+	var out strings.Builder
+	out.Grow(len(jsonText))
+	inString, escaped := false, false
+	for i := 0; i < len(jsonText); {
+		c := jsonText[i]
+		if inString {
+			out.WriteByte(c)
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			i++
+			continue
+		}
+		if c == '"' {
+			inString = true
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		if token := bareFloatToken(jsonText[i:]); token != "" {
+			out.WriteString("null")
+			i += len(token)
+			continue
+		}
+		out.WriteByte(c)
+		i++
+	}
+	return out.String()
+}
+
+func bareFloatToken(rest string) string {
+	for _, token := range []string{"NaN", "Infinity", "-Infinity"} {
+		if strings.HasPrefix(rest, token) {
+			return token
+		}
+	}
+	return ""
 }
 
 // sortedNodeIDs returns node ids in numeric order so extraction is
@@ -253,10 +308,35 @@ func (g comfyAPIGraph) comfyPrompts() (string, string) {
 		}
 	}
 
+	// Guider chain: SamplerCustomAdvanced wires a guider instead of carrying
+	// positive/negative inputs, and guiders (BasicGuider and friends) expose the
+	// conditioning as a single link. In every layout seen so far that stream
+	// carries the positive prompt; the walk upstream already stops at the first
+	// text-bearing node, so pass-through bundles do not confuse it.
+	if positive == "" {
+		for _, id := range g.sortedNodeIDs() {
+			node := g[id]
+			for _, key := range []string{"guider", "conditioning"} {
+				if link, ok := node.linkInput(key); ok {
+					if text := g.resolveConditioningText(link); text != "" {
+						positive = text
+						break
+					}
+				}
+			}
+			if positive != "" {
+				break
+			}
+		}
+	}
+
 	// Fallback: nodes that carry the prompt as a plain widget. Video models such
 	// as MiniMax H3 or Wan take the prompt directly, with no text encoder and no
-	// positive/negative pair on the sampler.
-	var encoderTexts []string
+	// positive/negative pair on the sampler. Alongside the named prompt widgets,
+	// string-widget nodes (PrimitiveString, PrimitiveStringMultiline, …) hold
+	// prompt text in a generic "value" slot; subgraph-enabled ComfyUI builds
+	// flatten those into the graph under ids like "22:11".
+	var looseTexts []string
 	for _, id := range g.sortedNodeIDs() {
 		node := g[id]
 
@@ -278,26 +358,51 @@ func (g comfyAPIGraph) comfyPrompts() (string, string) {
 			}
 		}
 
-		if strings.Contains(node.ClassType, "TextEncode") {
+		switch {
+		case strings.Contains(node.ClassType, "TextEncode"):
 			if text, ok := node.stringInput("text"); ok {
-				encoderTexts = append(encoderTexts, text)
+				looseTexts = append(looseTexts, text)
+			}
+		case strings.Contains(node.ClassType, "String"):
+			for _, key := range []string{"value", "text", "string"} {
+				if text, ok := node.stringInput(key); ok {
+					looseTexts = append(looseTexts, text)
+					break
+				}
 			}
 		}
 	}
 
-	// Two bare text encoders and nothing to disambiguate them: the longer one is
-	// the positive prompt in practice, negatives being short quality boilerplate.
-	if positive == "" && len(encoderTexts) > 0 {
-		sort.SliceStable(encoderTexts, func(a, b int) bool {
-			return len(encoderTexts[a]) > len(encoderTexts[b])
-		})
-		positive = encoderTexts[0]
-		if negative == "" && len(encoderTexts) == 2 {
-			negative = encoderTexts[1]
+	// Bare text widgets and nothing to disambiguate them: the longer one is the
+	// positive prompt in practice, negatives being short quality boilerplate.
+	if positive == "" && len(looseTexts) > 0 {
+		if negative == "" && len(looseTexts) == 2 && looksLikeNegativePrompt(looseTexts[1]) {
+			negative = looseTexts[1]
+			looseTexts = looseTexts[:1]
 		}
+		sort.SliceStable(looseTexts, func(a, b int) bool {
+			return len(looseTexts[a]) > len(looseTexts[b])
+		})
+		positive = looseTexts[0]
 	}
 
 	return positive, negative
+}
+
+// looksLikeNegativePrompt recognises the short quality boilerplate workflows
+// feed the negative conditioning input, so a pair of bare text widgets can be
+// told apart without following any link.
+func looksLikeNegativePrompt(text string) bool {
+	lower := strings.ToLower(text)
+	for _, cue := range []string{
+		"worst quality", "low quality", "bad quality", "blurry", "jpeg artifacts",
+		"watermark", "bad anatomy", "bad hands", "deformed", "negative prompt",
+	} {
+		if strings.Contains(lower, cue) {
+			return true
+		}
+	}
+	return false
 }
 
 // comfyLoras collects the enabled LoRAs from every loader style we have seen.

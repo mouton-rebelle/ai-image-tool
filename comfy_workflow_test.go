@@ -150,3 +150,71 @@ func TestParseComfyAPIPromptKeepsExistingValues(t *testing.T) {
 		t.Errorf("Seed = %d, want the earlier parser's value to win", metadata.Seed)
 	}
 }
+
+// ComfyUI writes non-standard bare floats into some nodes ("is_changed":
+// [NaN]); Go rejects those tokens, and without sanitising them the whole graph
+// is thrown away and its raw JSON ends up stored as the prompt.
+func TestParseComfyAPIPromptToleratesBareNaN(t *testing.T) {
+	app := &App{}
+	metadata := &ImageMetadata{}
+
+	graph := `{"1": {"class_type": "KSampler", "inputs": {"seed": 1, "positive": ["2", 0]}},
+	           "2": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": "a calm sea"}},
+	           "3": {"class_type": "RIFEInterpolation", "inputs": {"images": ["9", 0]}, "is_changed": [NaN]}}`
+	if !app.parseComfyAPIPrompt(graph, metadata) {
+		t.Fatal("parseComfyAPIPrompt returned false for a graph containing bare NaN")
+	}
+	if metadata.Prompt != "a calm sea" {
+		t.Errorf("Prompt = %q", metadata.Prompt)
+	}
+}
+
+// SamplerCustomAdvanced wires a guider node whose conditioning input carries
+// the prompt; there is no positive/negative pair to follow anywhere.
+func TestParseComfyAPIPromptFollowsGuiderChain(t *testing.T) {
+	app := &App{}
+	metadata := &ImageMetadata{}
+
+	graph := `{"13": {"class_type": "SamplerCustomAdvanced", "inputs": {"guider": ["9", 0], "noise": ["12", 0]}},
+	           "9": {"class_type": "BasicGuider", "inputs": {"conditioning": ["8", 0]}},
+	           "8": {"class_type": "CLIPTextEncode", "inputs": {"text": "a lighthouse at dusk"}}}`
+	if !app.parseComfyAPIPrompt(graph, metadata) {
+		t.Fatal("parseComfyAPIPrompt returned false for a guider-chain graph")
+	}
+	if metadata.Prompt != "a lighthouse at dusk" {
+		t.Errorf("Prompt = %q", metadata.Prompt)
+	}
+}
+
+// Subgraph-enabled builds flatten the subgraph's inner nodes into the API
+// graph under "<instance>:<node>" ids; the prompt widget then sits far from
+// any sampler and has no conventional key.
+func TestParseComfyAPIPromptReadsSubgraphStringWidget(t *testing.T) {
+	app := &App{}
+	metadata := &ImageMetadata{}
+
+	graph := `{"5": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {"prompt": ["22:11", 0], "seed": ["16", 0]}},
+	           "16": {"class_type": "easy seed", "inputs": {"seed": 459165427935710}},
+	           "22:11": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": "a pov shot of a garden wall"}}}`
+	if !app.parseComfyAPIPrompt(graph, metadata) {
+		t.Fatal("parseComfyAPIPrompt returned false for a subgraph-flattened graph")
+	}
+	if metadata.Prompt != "a pov shot of a garden wall" {
+		t.Errorf("Prompt = %q", metadata.Prompt)
+	}
+	if metadata.Seed != 459165427935710 {
+		t.Errorf("Seed = %d", metadata.Seed)
+	}
+}
+
+// A JSON blob no parser recognises must be dropped, not stored as the prompt:
+// leaking it there is what filled the grid with raw workflow JSON.
+func TestParseGenerationParamsIgnoresUnparsableJSON(t *testing.T) {
+	app := &App{}
+	metadata := &ImageMetadata{}
+
+	app.parseGenerationParams(`{"prompt": "{\"5\": {\"inputs\": {\"prompt\": [\"22:11\", 0]}}}", "unknown_key": true}`, metadata)
+	if metadata.Prompt != "" {
+		t.Errorf("Prompt = %q, want an unparsable JSON blob to be ignored", metadata.Prompt)
+	}
+}

@@ -90,9 +90,15 @@ func (app *App) parseGenerationParams(text string, metadata *ImageMetadata) {
 	// Clean Unicode encoding where spaces are inserted between characters
 	cleanText := app.cleanUnicodeText(text)
 
-	// First, try to detect and parse JSON formats
 	if app.tryParseJSON(cleanText, metadata) {
 		return // Successfully parsed as JSON, we're done
+	}
+
+	// An unparsable JSON blob (a workflow shape we do not recognise, a hosted
+	// generator's provenance dump) is metadata, not a prompt. Dumping it into
+	// the prompt field would also drag parameter-shaped noise along.
+	if strings.HasPrefix(strings.TrimSpace(cleanText), "{") {
+		return
 	}
 
 	// Fall back to traditional text parsing for non-JSON formats
