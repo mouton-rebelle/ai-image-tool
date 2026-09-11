@@ -1156,9 +1156,40 @@
     reportImport(result.notes.length ? result.notes : ['Everything was read back.']);
   });
 
+  // The Clipboard API only exists in a secure context (HTTPS or localhost);
+  // the tool is also served over plain HTTP on the local network, where the
+  // hidden-textarea execCommand fallback is the only way to copy.
+  function copyToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).catch(() => copyWithLegacyFallback(text));
+    }
+    return copyWithLegacyFallback(text);
+  }
+
+  function copyWithLegacyFallback(text) {
+    return new Promise((resolve, reject) => {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        const copied = document.execCommand('copy');
+        copied ? resolve() : reject(new Error('execCommand failed'));
+      } catch (err) {
+        reject(err);
+      } finally {
+        document.body.removeChild(textArea);
+      }
+    });
+  }
+
   els.copy.addEventListener('click', async () => {
     try {
-      await navigator.clipboard.writeText(serialize(state));
+      await copyToClipboard(serialize(state));
       els.copy.textContent = 'Copied ✓';
     } catch {
       els.copy.textContent = 'Failed';
