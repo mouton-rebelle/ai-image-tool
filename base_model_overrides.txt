@@ -1,0 +1,16 @@
+# Base model overrides for the Civitai upload tool.
+#
+# Civitai derives the base model chip from a linked model version, and your
+# video checkpoints are local finetunes Civitai cannot match by hash or name.
+# Map a fragment of the checkpoint filename to the Civitai model version id
+# that carries the right base model (copy the id from the version's page URL:
+# civitai.com/models/<modelId>?modelVersionId=<id> — the number after the ?).
+#
+# Format: fragment=versionId   (one rule per line, # comments, blank lines ok;
+# the longest matching fragment wins, so wan2.2_i2v can refine wan)
+#
+# Example:
+#   h3=3304150
+#   wan2.2_i2v=1234567
+
+h3=3304150

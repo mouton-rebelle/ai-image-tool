@@ -702,14 +702,23 @@
             modelElement.textContent = cleanModel;
             versionElement.style.display = 'none';
         }
-
         // Reset the Civitai upload affordances for the newly shown media.
+        // The button only applies to videos; the text lives in a span so the
+        // upload handler can rewrite it without touching the button node.
         const civitaiBtn = document.getElementById('civitai-upload-btn');
         const civitaiStatus = document.getElementById('civitai-upload-status');
         const civitaiLink = document.getElementById('civitai-post-link');
         if (civitaiBtn && civitaiStatus && civitaiLink) {
+            const shownMeta = (window.lightboxMetadata || [])[window.currentLightboxIndex];
             civitaiBtn.disabled = false;
-            civitaiBtn.hidden = false;
+            civitaiBtn.hidden = !shownMeta || shownMeta.mediaType !== 'video';
+            let civitaiText = document.getElementById('civitai-upload-text');
+            if (!civitaiText) {
+                civitaiText = document.createElement('span');
+                civitaiText.id = 'civitai-upload-text';
+                civitaiBtn.appendChild(civitaiText);
+            }
+            civitaiText.textContent = 'civitai';
             civitaiLink.hidden = true;
             civitaiLink.removeAttribute('href');
             civitaiStatus.hidden = true;
