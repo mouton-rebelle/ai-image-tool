@@ -154,6 +154,22 @@ func (app *App) initDB() error {
 	app.addColumnIfMissing("images", "media_type", "TEXT NOT NULL DEFAULT 'image'")
 	app.addColumnIfMissing("images", "duration", "REAL NOT NULL DEFAULT 0")
 	app.addColumnIfMissing("images", "has_audio", "BOOLEAN NOT NULL DEFAULT FALSE")
+	// Upload tracking: sha256 catches byte-identical re-imports; the Civitai
+	// IDs recorded by the upload tool let the importer skip media that is
+	// already on Civitai even though Civitai re-encodes the file (so the
+	// downloaded copy would never hash-match the local original).
+	app.addColumnIfMissing("images", "sha256", "TEXT")
+	app.addColumnIfMissing("images", "civitai_image_id", "INTEGER")
+	app.addColumnIfMissing("images", "civitai_post_id", "INTEGER")
+	app.addColumnIfMissing("images", "civitai_uploaded_at", "DATETIME")
+
+	if _, err := app.db.Exec("CREATE INDEX IF NOT EXISTS idx_civitai_image_id ON images(civitai_image_id)"); err != nil {
+		log.Printf("Warning: Failed to create civitai_image_id index: %v", err)
+	}
+
+	if _, err := app.db.Exec("CREATE INDEX IF NOT EXISTS idx_sha256 ON images(sha256)"); err != nil {
+		log.Printf("Warning: Failed to create sha256 index: %v", err)
+	}
 
 	if _, err := app.db.Exec("CREATE INDEX IF NOT EXISTS idx_media_type ON images(media_type)"); err != nil {
 		log.Printf("Warning: Failed to create media_type index: %v", err)
@@ -501,13 +517,9 @@ func (app *App) insertImageMetadata(metadata *ImageMetadata) error {
 		}
 	}
 
-	if metadata.MediaType == "" {
-		metadata.MediaType = mediaTypeForFilename(metadata.Filename)
-	}
-
 	query := `
-	INSERT INTO images (id, filename, width, height, model_id, model_hash, prompt, neg_prompt, steps, cfg_scale, sampler, scheduler, seed, thumbnail_path, is_nsfw, display_timestamp, media_type, duration, has_audio)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO images (id, filename, width, height, model_id, model_hash, prompt, neg_prompt, steps, cfg_scale, sampler, scheduler, seed, thumbnail_path, is_nsfw, display_timestamp, media_type, duration, has_audio, sha256)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := app.db.Exec(query,
@@ -530,6 +542,7 @@ func (app *App) insertImageMetadata(metadata *ImageMetadata) error {
 		metadata.MediaType,
 		metadata.Duration,
 		metadata.HasAudio,
+		metadata.SHA256,
 	)
 
 	if err != nil {

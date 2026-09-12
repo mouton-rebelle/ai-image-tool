@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -318,6 +319,15 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 		return false, nil
 	}
 
+	// Media this tool uploaded to Civitai carries its Civitai image id; the
+	// re-encoded copy served by the feed would otherwise come back as a
+	// "new" download. Hash matching is the belt to this suspenders: it also
+	// catches byte-identical copies uploaded under another id.
+	var known int
+	if err := app.db.QueryRow("SELECT COUNT(*) FROM images WHERE civitai_image_id = ?", img.ID).Scan(&known); err == nil && known > 0 {
+		return false, nil
+	}
+
 	// Determine file extension from URL
 	ext := filepath.Ext(img.URL)
 	if ext == "" {
@@ -379,6 +389,17 @@ func (app *App) downloadImage(img CivitaiImage) (bool, error) {
 	if resp.ContentLength > 0 && written != resp.ContentLength {
 		os.Remove(tmpPath)
 		return false, fmt.Errorf("truncated download for image %d: got %d bytes, expected %d", img.ID, written, resp.ContentLength)
+	}
+
+	// Byte-identical content already lives in the library under another id —
+	// a re-post or a re-download — so keep the folder clean instead.
+	if hash, err := computeFileSHA256(tmpPath); err == nil && hash != "" {
+		var dupes int
+		if err := app.db.QueryRow("SELECT COUNT(*) FROM images WHERE sha256 = ?", hash).Scan(&dupes); err == nil && dupes > 0 {
+			os.Remove(tmpPath)
+			log.Printf("Skipped image %d: identical content already in the library", img.ID)
+			return false, nil
+		}
 	}
 
 	// Atomically move the fully-downloaded file into place.

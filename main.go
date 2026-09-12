@@ -91,6 +91,7 @@ type ImageMetadata struct {
 	MediaType        string     `json:"media_type"`        // "image" or "video"
 	Duration         float64    `json:"duration"`          // Video length in seconds, 0 for images
 	HasAudio         bool       `json:"has_audio"`         // Whether a video carries an audio track
+	SHA256           string     `json:"-"`                 // Content hash for dedup (not part of JSON payloads)
 	TruncatedPrompt  string     `json:"-"`
 	LoRAs            []LoraData `json:"loras"` // LoRA data for JSON and template display
 }
@@ -379,6 +380,7 @@ func (app *App) setupRoutes(router *mux.Router) {
 	router.HandleFunc("/api/toggle-category", app.handleToggleCategory).Methods("POST")
 	router.HandleFunc("/api/generate-prompt", app.handleGeneratePrompt).Methods("POST")
 	router.HandleFunc("/api/comfy/generate-prompt", app.handleComfyGeneratePrompt).Methods("POST")
+	router.HandleFunc("/api/civitai/upload", app.handleCivitaiUpload).Methods("POST")
 }
 
 // handleThumbnail serves a thumbnail, generating it from the source media when

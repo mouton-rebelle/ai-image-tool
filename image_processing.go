@@ -55,7 +55,10 @@ func (app *App) processImages() error {
 		return fmt.Errorf("failed to create media directories: %v", err)
 	}
 
-	// Videos used to land in images/ and images_nsfw/ alongside the stills.
+	// Older videos predate the sha256 column; hash them once so the import
+	// dedup checks can compare.
+	app.backfillMissingHashes()
+
 	// Move any leftovers into their own libraries before scanning.
 	if moved, duplicates := normalizeMediaLibraries(); moved > 0 || duplicates > 0 {
 		fmt.Printf("Moved %d video files into the video libraries", moved)
@@ -121,11 +124,19 @@ func (app *App) processImages() error {
 
 		fmt.Printf("Processing %d/%d: %s (%s)\n", i+1, len(uniqueFiles), filename, nsfwStatus)
 
-		// Extract metadata and create thumbnail
+		// Extract metadata, hash, and create thumbnail
 		metadata, err := app.extractMediaMetadata(imagePath, isNSFW)
 		if err != nil {
 			log.Printf("Error extracting metadata for %s: %v", filename, err)
 			continue
+		}
+
+		// Hashing at index time gives the dedup checks a stable key; a few
+		// hundred ms per file is nothing next to metadata probing.
+		if hash, err := computeFileSHA256(imagePath); err == nil {
+			metadata.SHA256 = hash
+		} else {
+			log.Printf("Warning: could not hash %s: %v", filename, err)
 		}
 
 		// Insert into database

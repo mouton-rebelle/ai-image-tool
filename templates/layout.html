@@ -145,6 +145,12 @@
                     <button id="delete-image-btn" class="delete-image-btn" type="button" onclick="deleteCurrentImage()" title="Delete image">
                         <span id="delete-image-text">delete</span>
                     </button>
+                    <button id="civitai-upload-btn" class="civitai-upload-btn" type="button" onclick="sendToCivitai()" title="Upload to Civitai as draft post">
+                        <span id="civitai-upload-text">civitai</span>
+                    </button>
+                    <a id="civitai-post-link" class="civitai-post-link" href="#" target="_blank" rel="noopener" hidden>civitai ↗</a>
+                </div>
+                <p id="civitai-upload-status" class="civitai-upload-status" aria-live="polite" hidden></p>
                 </div>
             </div>
         </div>
@@ -697,6 +703,19 @@
             versionElement.style.display = 'none';
         }
 
+        // Reset the Civitai upload affordances for the newly shown media.
+        const civitaiBtn = document.getElementById('civitai-upload-btn');
+        const civitaiStatus = document.getElementById('civitai-upload-status');
+        const civitaiLink = document.getElementById('civitai-post-link');
+        if (civitaiBtn && civitaiStatus && civitaiLink) {
+            civitaiBtn.disabled = false;
+            civitaiBtn.hidden = false;
+            civitaiLink.hidden = true;
+            civitaiLink.removeAttribute('href');
+            civitaiStatus.hidden = true;
+            civitaiStatus.textContent = '';
+        }
+
         modelElement.title = model || 'Unknown Model'; // Show full name on hover
 
         // Parameters
@@ -1197,6 +1216,63 @@
             window.currentNSFWFilter || 'all',
             window.modelStatsRequestVersion
         );
+    };
+
+    // Upload the currently shown video to Civitai as a draft post, with the
+    // metadata we parsed at index time. The server is idempotent: a media
+    // that was already uploaded answers with its post URL instead of
+    // creating a second post.
+    window.sendToCivitai = async function() {
+        const currentImageData = window.lightboxMetadata[window.currentLightboxIndex];
+        if (!currentImageData?.id) return;
+
+        const button = document.getElementById('civitai-upload-btn');
+        const buttonText = document.getElementById('civitai-upload-text');
+        const status = document.getElementById('civitai-upload-status');
+        const link = document.getElementById('civitai-post-link');
+
+        if (currentImageData.mediaType !== 'video') {
+            status.hidden = false;
+            status.textContent = 'Only videos can be uploaded to Civitai for now.';
+            return;
+        }
+
+        button.disabled = true;
+        buttonText.textContent = 'uploading...';
+        status.hidden = true;
+        status.textContent = '';
+        link.hidden = true;
+
+        try {
+            const response = await fetch(`/api/civitai/upload?id=${encodeURIComponent(currentImageData.id)}`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+
+            if (response.ok && data.ok) {
+                if (data.already) {
+                    buttonText.textContent = 'on civitai';
+                    status.hidden = false;
+                    status.textContent = 'Already uploaded — draft is on your Civitai account.';
+                } else {
+                    buttonText.textContent = 'draft created';
+                    status.hidden = false;
+                    status.textContent = 'Draft created on Civitai. Review it there, then publish.';
+                }
+                if (data.post_url) {
+                    link.href = data.post_url;
+                    link.hidden = false;
+                }
+            } else {
+                throw new Error(data.error || data.message || 'Civitai upload failed');
+            }
+        } catch (error) {
+            console.error('Error uploading to Civitai:', error);
+            buttonText.textContent = 'civitai';
+            status.hidden = false;
+            status.textContent = `Upload failed: ${error.message}`;
+            button.disabled = false;
+        }
     };
 
     window.deleteCurrentImage = async function() {
