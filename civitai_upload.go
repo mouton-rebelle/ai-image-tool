@@ -105,7 +105,7 @@ type civitaiCheckpointVersion struct {
 // plus passthrough fields like baseModel, hashes, resources and comfy). The
 // base model chip on Civitai is derived from linked model versions, not from
 // the baseModel string, so a resolved checkpoint also carries civitaiResources.
-func (app *App) buildCivitaiMeta(row *civitaiMediaRow, rawComfyGraph string, loras []LoraData, resolved *civitaiCheckpointVersion) map[string]any {
+func (app *App) buildCivitaiMeta(row *civitaiMediaRow, rawComfyGraph string, loras []LoraData, resolved *civitaiCheckpointVersion, modelSHA string) map[string]any {
 	meta := map[string]any{
 		"prompt":         row.Prompt,
 		"negativePrompt": row.NegPrompt,
@@ -126,10 +126,14 @@ func (app *App) buildCivitaiMeta(row *civitaiMediaRow, rawComfyGraph string, lor
 	}
 
 	hashes := map[string]string{}
-	if row.ModelHash != "" {
-		hashes["model"] = row.ModelHash
+	// The full SHA256 of the real weight file is what Civitai matches its
+	// model files against; a stored short hash is only a fallback.
+	modelHash := modelSHA
+	if modelHash == "" && row.ModelHash != "" && !strings.HasPrefix(row.ModelHash, "local:") {
+		modelHash = row.ModelHash
 	}
-	if len(hashes) > 0 {
+	if modelHash != "" {
+		hashes["model"] = modelHash
 		meta["hashes"] = hashes
 	}
 
@@ -138,7 +142,7 @@ func (app *App) buildCivitaiMeta(row *civitaiMediaRow, rawComfyGraph string, lor
 		resources = append(resources, civitaiResource{
 			Type: "model",
 			Name: row.ModelName,
-			Hash: row.ModelHash,
+			Hash: modelHash,
 		})
 	}
 	for _, lora := range loras {
@@ -266,14 +270,25 @@ func (app *App) handleCivitaiUpload(w http.ResponseWriter, r *http.Request) {
 	// example to refresh the meta after a fix. The old draft stays on the
 	// account; the row's recorded IDs move to the new post.
 	force := r.URL.Query().Get("force") == "1"
+
+	// A post id can go stale when the draft was deleted on the site; verify
+	// before claiming an upload is done, and clear the stale record so the
+	// media can be uploaded again.
+	apiClient := &http.Client{Timeout: civitaiAPITimeout}
 	if row.CivitaiPostID.Valid && !force {
-		writeJSON(w, http.StatusOK, civitaiUploadResult{
-			OK:      true,
-			Already: true,
-			PostID:  row.CivitaiPostID.Int64,
-			PostURL: fmt.Sprintf("%s/posts/%d", civitaiWebURL, row.CivitaiPostID.Int64),
-		})
-		return
+		if app.civitaiPostExists(apiClient, token, row.CivitaiPostID.Int64) {
+			writeJSON(w, http.StatusOK, civitaiUploadResult{
+				OK:      true,
+				Already: true,
+				PostID:  row.CivitaiPostID.Int64,
+				PostURL: fmt.Sprintf("%s/posts/%d", civitaiWebURL, row.CivitaiPostID.Int64),
+			})
+			return
+		}
+		log.Printf("Civitai post %d no longer exists, clearing upload record for %s", row.CivitaiPostID.Int64, row.Filename)
+		app.db.Exec("UPDATE images SET civitai_image_id = NULL, civitai_post_id = NULL, civitai_uploaded_at = NULL WHERE id = ?", row.ID)
+		row.CivitaiPostID = sql.NullInt64{}
+		row.CivitaiImageID = sql.NullInt64{}
 	}
 
 	if row.MediaType != mediaTypeVideo {
@@ -307,15 +322,20 @@ func (app *App) handleCivitaiUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Hash the checkpoint file on disk when it is reachable: a full SHA256
+	// lets Civitai match the published model file exactly (same mechanism as
+	// A1111 metadata), which is the only safe attribution for local
+	// finetunes whose names appear nowhere on Civitai.
+	modelSHA := locateModelFileSHA256(row.ModelName)
+
 	// Resolve the checkpoint to a Civitai model version so the base model
 	// chip can be recognized (the chip reads linked resources, not the
 	// meta.baseModel string). Best-effort: an unresolved checkpoint only
 	// means the chip stays blank.
-	apiClient := &http.Client{Timeout: civitaiAPITimeout}
-	resolved := app.resolveCivitaiCheckpoint(apiClient, token, row)
+	resolved := app.resolveCivitaiCheckpoint(apiClient, token, row, modelSHA)
 
 	loras := app.loadLorasForImage(id)
-	meta := app.buildCivitaiMeta(row, rawComfyGraph, loras, resolved)
+	meta := app.buildCivitaiMeta(row, rawComfyGraph, loras, resolved, modelSHA)
 
 	if err := app.civitaiUploadAndCreatePost(token, path, row, meta); err != nil {
 		log.Printf("Civitai upload failed for %s: %v", row.Filename, err)
@@ -332,20 +352,19 @@ func (app *App) handleCivitaiUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveCivitaiCheckpoint matches our local checkpoint to a Civitai model
-// version, in order of trust: an explicit override-file entry, a real file
-// hash through the public by-hash endpoint, then a strict name search.
-// Local ComfyUI finetunes carry no matchable hash and no published
-// checkpoint, so the override file is usually the only resolution path.
-func (app *App) resolveCivitaiCheckpoint(client *http.Client, token string, row *civitaiMediaRow) *civitaiCheckpointVersion {
+// version, in order of trust: the SHA256 of the actual weight file on disk
+// (exact, same mechanism as A1111 metadata), a stored real file hash through
+// the public by-hash endpoint, then a strict name search. Local ComfyUI
+// finetunes only resolve when their weight file is reachable and published.
+func (app *App) resolveCivitaiCheckpoint(client *http.Client, token string, row *civitaiMediaRow, modelSHA string) *civitaiCheckpointVersion {
 	if row.ModelName == "" {
 		return nil
 	}
 
-	if versionID, ok := lookupBaseModelOverride(row.ModelName); ok {
-		if version, err := civitaiVersionByID(client, token, versionID); err == nil && version != nil {
+	// A full SHA256 of the real file is the strongest signal.
+	if modelSHA != "" {
+		if version, err := civitaiVersionByHash(client, token, modelSHA); err == nil && version != nil {
 			return version
-		} else if err != nil {
-			log.Printf("Civitai version %d from base_model_overrides.txt: %v", versionID, err)
 		}
 	}
 
@@ -361,70 +380,109 @@ func (app *App) resolveCivitaiCheckpoint(client *http.Client, token string, row 
 	return nil
 }
 
-// lookupBaseModelOverride scans base_model_overrides.txt for a
-// "fragment=versionId" rule whose fragment appears in the checkpoint name;
-// the longest matching fragment wins so "wan2.2_i2v" can refine "wan".
-func lookupBaseModelOverride(checkpointName string) (int64, bool) {
-	data, err := os.ReadFile("base_model_overrides.txt")
-	if err != nil {
-		return 0, false
+// locateModelFileSHA256 hashes the weight file named after the checkpoint,
+// searching COMFYUI_MODELS_DIR (':'-separated roots) up to two levels deep,
+// mirroring ComfyUI's unet/diffusion_models/checkpoints layout. Returns ""
+// when the file is not reachable, so the upload proceeds without a hash.
+func locateModelFileSHA256(checkpointName string) string {
+	roots := strings.Split(os.Getenv("COMFYUI_MODELS_DIR"), string(os.PathListSeparator))
+	if len(roots) == 1 && roots[0] == "" {
+		return ""
 	}
 
-	name := strings.ToLower(checkpointName)
-	bestFragment := ""
-	var bestID int64
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
+	if !strings.HasSuffix(strings.ToLower(checkpointName), ".safetensors") {
+		checkpointName += ".safetensors"
+	}
+
+	for _, root := range roots {
+		if root == "" {
 			continue
 		}
-		fragment, value, found := strings.Cut(line, "=")
-		if !found {
+		entries, err := os.ReadDir(root)
+		if err != nil {
 			continue
 		}
-		versionID, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-		if err != nil || versionID == 0 {
-			continue
-		}
-		fragment = strings.ToLower(strings.TrimSpace(fragment))
-		if fragment != "" && strings.Contains(name, fragment) && len(fragment) > len(bestFragment) {
-			bestFragment = fragment
-			bestID = versionID
+		for _, entry := range entries {
+			// Models sit either directly in the root or one level down in
+			// subdirectories like unet/ and diffusion_models/.
+			var candidates []string
+			if entry.IsDir() {
+				candidates = []string{filepath.Join(root, entry.Name(), checkpointName)}
+			} else {
+				candidates = []string{filepath.Join(root, entry.Name())}
+			}
+			for _, candidate := range candidates {
+				info, err := os.Stat(candidate)
+				if err != nil || info.IsDir() {
+					continue
+				}
+				if !strings.EqualFold(filepath.Base(candidate), checkpointName) {
+					continue
+				}
+				hash, err := computeFileSHA256(candidate)
+				if err != nil {
+					log.Printf("Could not hash %s: %v", candidate, err)
+					return ""
+				}
+				log.Printf("Hashed checkpoint %s -> %s", candidate, hash[:12])
+				return hash
+			}
 		}
 	}
-	return bestID, bestID != 0
+	return ""
 }
 
-// civitaiVersionByID fetches a model version directly, used for override
-// file entries that pin a checkpoint to one published version.
-func civitaiVersionByID(client *http.Client, token string, versionID int64) (*civitaiCheckpointVersion, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/model-versions/%d", civitaiBaseURL, versionID), nil)
+// civitaiPostExists checks whether a post still exists on the site, so a
+// draft deleted after an upload does not block re-uploading.
+func (app *App) civitaiPostExists(client *http.Client, token string, postID int64) bool {
+	wrapped := map[string]any{"json": map[string]any{"id": postID}}
+	body, _ := json.Marshal(wrapped)
+
+	req, err := http.NewRequest("GET", civitaiBaseURL+"/api/trpc/post.get?input="+url.QueryEscape(string(body)), nil)
 	if err != nil {
-		return nil, err
+		return true // fail open: never block a re-upload on a probe error
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return true
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("version lookup status %d", resp.StatusCode)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return true
 	}
 
-	var payload struct {
-		ID        int64  `json:"id"`
-		BaseModel string `json:"baseModel"`
+	var envelope struct {
+		Result struct {
+			Data struct {
+				JSON *json.RawMessage `json:"json"`
+			} `json:"data"`
+		} `json:"result"`
+		Error *struct {
+			JSON struct {
+				Message string `json:"message"`
+			} `json:"json"`
+		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, err
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return true
 	}
-	if payload.ID == 0 {
-		return nil, fmt.Errorf("no version id in response")
+	if envelope.Error != nil {
+		return false
 	}
-	return &civitaiCheckpointVersion{ID: payload.ID, BaseModel: payload.BaseModel}, nil
+	if envelope.Result.Data.JSON == nil {
+		return false
+	}
+	// post.get answers null for a missing or not-visible post.
+	var post map[string]any
+	if err := json.Unmarshal(*envelope.Result.Data.JSON, &post); err != nil || post == nil {
+		return false
+	}
+	_, ok := post["id"]
+	return ok
 }
 
 // civitaiVersionByHash resolves a checkpoint file hash (AutoV2 or SHA256) to
