@@ -82,22 +82,8 @@ func (app *App) processImages() error {
 		}
 	}
 
-	fmt.Printf("Total: %d unique media files\n", len(uniqueFiles))
-
 	for i, imagePath := range uniqueFiles {
 		filename := filepath.Base(imagePath)
-
-		if civitaiID, ok := civitaiImageIDFromFilename(filename); ok {
-			blacklisted, err := app.isCivitaiImageBlacklisted(civitaiID)
-			if err != nil {
-				log.Printf("Error checking deletion blacklist for %s: %v", filename, err)
-				continue
-			}
-			if blacklisted {
-				fmt.Printf("Skipping %s (previously deleted)\n", filename)
-				continue
-			}
-		}
 
 		// Check if already processed
 		var count int
@@ -116,7 +102,6 @@ func (app *App) processImages() error {
 			continue
 		}
 
-		// Determine if NSFW based on directory
 		isNSFW := mediaDirIsNSFW(filepath.Dir(imagePath))
 		nsfwStatus := "SFW"
 		if isNSFW {
@@ -125,37 +110,114 @@ func (app *App) processImages() error {
 
 		fmt.Printf("Processing %d/%d: %s (%s)\n", i+1, len(uniqueFiles), filename, nsfwStatus)
 
-		// Extract metadata, hash, and create thumbnail
-		metadata, err := app.extractMediaMetadata(imagePath, isNSFW)
+		indexed, err := app.indexNewMediaFile(imagePath)
 		if err != nil {
-			log.Printf("Error extracting metadata for %s: %v", filename, err)
-			continue
+			log.Printf("Error processing %s: %v", filename, err)
+		} else if !indexed {
+			fmt.Printf("Skipping %s (previously deleted)\n", filename)
 		}
+	}
 
-		// Hashing at index time gives the dedup checks a stable key; a few
-		// hundred ms per file is nothing next to metadata probing.
-		if hash, err := computeFileSHA256(imagePath); err == nil {
-			metadata.SHA256 = hash
-		} else {
-			log.Printf("Warning: could not hash %s: %v", filename, err)
-		}
+	return nil
+}
 
-		// Insert into database
-		err = app.insertImageMetadata(metadata)
+// indexNewMediaFile indexes a single media file that is not yet in the
+// database: deletion-blacklist check, metadata extraction, hashing and
+// inserts. It returns indexed=false, nil when the file was previously
+// deleted from the UI and must not come back.
+func (app *App) indexNewMediaFile(imagePath string) (bool, error) {
+	filename := filepath.Base(imagePath)
+
+	if civitaiID, ok := civitaiImageIDFromFilename(filename); ok {
+		blacklisted, err := app.isCivitaiImageBlacklisted(civitaiID)
 		if err != nil {
-			log.Printf("Error inserting metadata for %s: %v", filename, err)
-			continue
+			return false, fmt.Errorf("checking deletion blacklist: %w", err)
 		}
+		if blacklisted {
+			return false, nil
+		}
+	}
 
-		// Insert LoRA data
-		if len(metadata.LoRAs) > 0 {
-			err = app.insertLoraData(metadata.ID, metadata.LoRAs)
-			if err != nil {
-				log.Printf("Error inserting LoRA data for %s: %v", filename, err)
+	isNSFW := mediaDirIsNSFW(filepath.Dir(imagePath))
+
+	// Extract metadata, hash, and create thumbnail
+	metadata, err := app.extractMediaMetadata(imagePath, isNSFW)
+	if err != nil {
+		return false, err
+	}
+
+	// Hashing at index time gives the dedup checks a stable key; a few
+	// hundred ms per file is nothing next to metadata probing.
+	if hash, err := computeFileSHA256(imagePath); err == nil {
+		metadata.SHA256 = hash
+	} else {
+		log.Printf("Warning: could not hash %s: %v", filename, err)
+	}
+
+	// Insert into database
+	if err := app.insertImageMetadata(metadata); err != nil {
+		return false, err
+	}
+
+	// Insert LoRA data
+	if len(metadata.LoRAs) > 0 {
+		if err := app.insertLoraData(metadata.ID, metadata.LoRAs); err != nil {
+			log.Printf("Error inserting LoRA data for %s: %v", filename, err)
+		}
+	}
+
+	return true, nil
+}
+
+// rescanMediaFiles indexes media files that appeared in the libraries since
+// the last pass, so files added while the server is running (downloads, manual
+// imports) show up without a restart. Known filenames are loaded with a
+// single query instead of one COUNT per file.
+func (app *App) rescanMediaFiles() error {
+	var uniqueFiles []string
+	fileMap := make(map[string]bool)
+	for _, dir := range mediaDirs() {
+		for _, file := range listMediaFiles(dir) {
+			if !fileMap[file] {
+				fileMap[file] = true
+				uniqueFiles = append(uniqueFiles, file)
 			}
 		}
 	}
 
+	known := make(map[string]bool)
+	rows, err := app.db.Query("SELECT filename FROM images")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var filename string
+		if err := rows.Scan(&filename); err == nil {
+			known[filename] = true
+		}
+	}
+
+	newCount := 0
+	for _, imagePath := range uniqueFiles {
+		filename := filepath.Base(imagePath)
+		if known[filename] {
+			continue
+		}
+		known[filename] = true // Blacklisted files stay on disk; never re-check them.
+		indexed, err := app.indexNewMediaFile(imagePath)
+		if err != nil {
+			log.Printf("Error indexing new file %s: %v", filename, err)
+		} else if indexed {
+			newCount++
+			fmt.Printf("Rescan indexed: %s\n", filename)
+		} else {
+			fmt.Printf("Rescan skipping %s (previously deleted)\n", filename)
+		}
+	}
+	if newCount > 0 {
+		fmt.Printf("Rescan: %d new file(s) indexed\n", newCount)
+	}
 	return nil
 }
 

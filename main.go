@@ -345,6 +345,24 @@ func main() {
 	if err := deduplicatePromptFiles(); err != nil {
 		log.Printf("Warning: Failed to deduplicate prompt files: %v", err)
 	}
+	// Periodically pick up media files that land in the libraries while the
+	// server runs (downloads, manual imports). RESCAN_INTERVAL is seconds,
+	// default 60; set to 0 to disable.
+	if seconds, err := strconv.Atoi(getEnvOrDefault("RESCAN_INTERVAL", "60")); err != nil || seconds > 0 {
+		go func() {
+			interval := 60 * time.Second
+			if err == nil {
+				interval = time.Duration(seconds) * time.Second
+			}
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := app.rescanMediaFiles(); err != nil {
+					log.Printf("Warning: media rescan failed: %v", err)
+				}
+			}
+		}()
+	}
 
 	// Start HTTP server
 	router := mux.NewRouter()
