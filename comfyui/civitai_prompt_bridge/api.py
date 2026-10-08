@@ -17,7 +17,27 @@ from .nodes import CONCEPTS, DEFAULT_SERVER_URL, TARGET_MODELS, get_capture
 # The viewer app allows its LLM call up to 6 minutes.
 REQUEST_TIMEOUT_SECONDS = 420
 
+# A `.local` host name goes through multicast DNS, which drops queries now and
+# then (sleeping Mac, Wi-Fi/Ethernet switch, multicast filtering). A failed
+# lookup means nothing was sent, so retrying cannot duplicate a generation.
+DNS_RETRY_DELAYS_SECONDS = (0.5, 1.0, 2.0, 4.0)
+
 ROUTE = "/civitai_prompt_bridge/generate"
+
+
+async def post_to_viewer(url, body):
+    """POST the capture to the viewer app, retrying host name lookups."""
+    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for delay in DNS_RETRY_DELAYS_SECONDS:
+            try:
+                async with session.post(url, json=body) as response:
+                    return response.status, await response.text()
+            except aiohttp.ClientConnectorDNSError as error:
+                logging.info("Civitai prompt bridge: lookup failed for %s (%s), retrying in %.1fs", url, error, delay)
+                await asyncio.sleep(delay)
+        async with session.post(url, json=body) as response:
+            return response.status, await response.text()
 
 
 @PromptServer.instance.routes.post(ROUTE)
@@ -54,12 +74,8 @@ async def generate_prompt(request):
         "steering": (payload.get("steering") or "").strip() or capture["steering"],
     }
 
-    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json=body) as response:
-                status = response.status
-                text = await response.text()
+        status, text = await post_to_viewer(url, body)
     except asyncio.TimeoutError:
         return web.json_response(
             {"error": "The viewer app did not answer within %d seconds" % REQUEST_TIMEOUT_SECONDS},

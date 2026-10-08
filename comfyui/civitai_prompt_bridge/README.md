@@ -36,7 +36,11 @@ Then set:
 - `server_url` — where the viewer app runs, e.g. `http://192.168.1.78:8081`.
   Defaults to the `CIVITAI_VIEWER_URL` environment variable, otherwise
   `http://127.0.0.1:8081`. Set this to the Mac's LAN address when ComfyUI runs
-  on another machine — the viewer app listens on `0.0.0.0` by default.
+  on another machine — the viewer app listens on `0.0.0.0` by default. A
+  `.local` name such as `http://cedric-mbp.local:8081` survives the Mac
+  switching between Wi-Fi and Ethernet; its multicast DNS lookup sometimes
+  drops, so failed lookups are retried four times (0.5s to 4s apart) before
+  the node reports an error.
 
 ## Use it
 
