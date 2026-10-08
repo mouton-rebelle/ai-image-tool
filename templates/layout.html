@@ -1,20 +1,32 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
     <title>{{.Title}}</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/masonry-layout@4/dist/masonry.pkgd.min.js"></script>
-    <link rel="stylesheet" href="/static/styles.css?v=20260830-video">
+    <link rel="stylesheet" href="/static/styles.css?v=20261008-gallery">
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>{{.Title}} <span class="image-count" id="image-count">({{.TotalCount}} images)</span></h1>
+        <header class="header" id="site-header">
+            <h1 class="brand">
+                <span class="brand-mark" aria-hidden="true"></span>
+                <span class="brand-text">
+                    <span class="brand-title">{{.Title}}</span>
+                    <span class="image-count" id="image-count">{{.TotalCount}} images</span>
+                </span>
+            </h1>
             <form class="search-form" hx-get="/search" hx-target="#image-results" hx-trigger="submit, change from:select[name='model'], keyup changed delay:500ms from:input[name='q']" hx-swap="innerHTML">
                 <div class="search-inputs">
-                    <input type="text" class="prompt-input" name="q" placeholder="Search prompts..." value="{{.SearchQuery}}">
-                    <select class="model-select" name="model">
+                    <label class="prompt-field">
+                        <svg class="prompt-field-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10.5 3a7.5 7.5 0 0 1 5.9 12.1l4.2 4.2a1 1 0 0 1-1.4 1.4l-4.2-4.2A7.5 7.5 0 1 1 10.5 3Zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Z"/></svg>
+                        <span class="visually-hidden">Search prompts</span>
+                        <input type="text" class="prompt-input" name="q" placeholder="Search prompts…" value="{{.SearchQuery}}" autocomplete="off" spellcheck="false">
+                    </label>
+                    <select class="model-select" name="model" aria-label="Model">
                         <option value="all">All Models</option>
                         {{range $model := .Models}}
                             <option value="{{$model.ID}}"{{if and (gt $.SelectedModelID 0) (eq $model.ID $.SelectedModelID)}} selected{{end}}>{{$model.Name}}{{if $model.VersionName}} - {{$model.VersionName}}{{end}} ({{$model.ImageCount}})</option>
@@ -46,65 +58,77 @@
                 <input type="hidden" name="media" id="media-filter" value="{{.MediaFilter}}">
                 <input type="hidden" name="page" value="1">
                 <div class="search-actions">
-                    <button type="submit" class="search-btn">Search</button>
-                    <button type="button" class="clear-btn" id="clear-btn" onclick="clearFilters()" title="Clear all filters" disabled>✕</button>
+                    <button type="submit" class="search-btn visually-hidden">Search</button>
+                    <button type="button" class="clear-btn" id="clear-btn" onclick="clearFilters()" title="Clear all filters" aria-label="Clear all filters" disabled>
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.7 5.3 12 10.6l5.3-5.3a1 1 0 1 1 1.4 1.4L13.4 12l5.3 5.3a1 1 0 0 1-1.4 1.4L12 13.4l-5.3 5.3a1 1 0 0 1-1.4-1.4l5.3-5.3-5.3-5.3a1 1 0 0 1 1.4-1.4Z"/></svg>
+                    </button>
                 </div>
             </form>
 
-            <div class="filter-buttons">
+            <div class="filter-buttons" role="group" aria-label="Content rating">
                 <button type="button" data-nsfw-filter="all" class="filter-btn{{if eq .NSFWFilter "all"}} active{{end}}" onclick="setNSFWFilter('all')">All</button>
-                <button type="button" data-nsfw-filter="sfw" class="filter-btn{{if eq .NSFWFilter "sfw"}} active{{end}}" onclick="setNSFWFilter('sfw')">SFW Only</button>
-                <button type="button" data-nsfw-filter="nsfw" class="filter-btn{{if eq .NSFWFilter "nsfw"}} active{{end}}" onclick="setNSFWFilter('nsfw')">NSFW Only</button>
+                <button type="button" data-nsfw-filter="sfw" class="filter-btn{{if eq .NSFWFilter "sfw"}} active{{end}}" onclick="setNSFWFilter('sfw')">SFW</button>
+                <button type="button" data-nsfw-filter="nsfw" class="filter-btn{{if eq .NSFWFilter "nsfw"}} active{{end}}" onclick="setNSFWFilter('nsfw')">NSFW</button>
             </div>
-        </div>
+        </header>
 
-        <div id="image-results" hx-get="{{.InitialURL}}" hx-trigger="load">
-            <div class="loading">Loading images...</div>
-        </div>
+        <main class="gallery">
+            <div id="image-results" hx-get="{{.InitialURL}}" hx-trigger="load">
+                <div class="loading">Loading images…</div>
+            </div>
 
-        <div id="load-more" style="display: none;" hx-target="#unified-grid" hx-swap="beforeend"
-             hx-trigger="intersect once" hx-indicator=".loading">
-            <div class="loading">Loading more images...</div>
-        </div>
+            <div id="load-more" style="display: none;" hx-target="#unified-grid" hx-swap="beforeend"
+                 hx-trigger="intersect once" hx-indicator=".loading">
+                <div class="loading">Loading more…</div>
+            </div>
+        </main>
     </div>
 
     <!-- Lightbox -->
-    <div id="lightbox" class="lightbox">
-        <span class="lightbox-close">&times;</span>
-        <span class="lightbox-prev">&#10094;</span>
-        <span class="lightbox-next">&#10095;</span>
+    <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="Media viewer">
+        <button type="button" class="lightbox-close" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.7 5.3 12 10.6l5.3-5.3a1 1 0 1 1 1.4 1.4L13.4 12l5.3 5.3a1 1 0 0 1-1.4 1.4L12 13.4l-5.3 5.3a1 1 0 0 1-1.4-1.4l5.3-5.3-5.3-5.3a1 1 0 0 1 1.4-1.4Z"/></svg>
+        </button>
+        <button type="button" class="lightbox-nav lightbox-prev" aria-label="Previous">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14.7 5.3a1 1 0 0 1 0 1.4L9.4 12l5.3 5.3a1 1 0 0 1-1.4 1.4l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 1.4 0Z"/></svg>
+        </button>
+        <button type="button" class="lightbox-nav lightbox-next" aria-label="Next">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9.3 5.3a1 1 0 0 1 1.4 0l6 6a1 1 0 0 1 0 1.4l-6 6a1 1 0 0 1-1.4-1.4l5.3-5.3-5.3-5.3a1 1 0 0 1 0-1.4Z"/></svg>
+        </button>
         <div class="lightbox-content">
             <img id="lightbox-img" src="" alt="">
             <video id="lightbox-video" controls loop playsinline preload="metadata" hidden></video>
-            <div class="lightbox-metadata">
+            <aside class="lightbox-metadata">
                 <div class="lightbox-model-info">
+                    <span class="panel-eyebrow" id="lightbox-counter"></span>
                     <h3 id="lightbox-model"></h3>
                     <p class="lightbox-version" id="lightbox-version"></p>
                 </div>
-                <div class="lightbox-params">
-                    <span id="lightbox-steps"></span>
-                    <span id="lightbox-cfg"></span>
-                    <span id="lightbox-sampler"></span>
-                    <span id="lightbox-scheduler"></span>
-                    <span id="lightbox-seed" class="clickable-seed" onclick="copySeed()" title="Click to copy seed"></span>
-                </div>
+                <dl class="lightbox-params">
+                    <div class="param"><dt>Steps</dt><dd id="lightbox-steps"></dd></div>
+                    <div class="param"><dt>CFG</dt><dd id="lightbox-cfg"></dd></div>
+                    <div class="param"><dt>Sampler</dt><dd id="lightbox-sampler"></dd></div>
+                    <div class="param"><dt>Scheduler</dt><dd id="lightbox-scheduler"></dd></div>
+                    <div class="param param-seed clickable-seed" onclick="copySeed()" title="Click to copy seed"><dt>Seed</dt><dd id="lightbox-seed"></dd></div>
+                </dl>
                 <div class="lightbox-loras-section" id="lightbox-loras-section">
-                    <strong>LoRAs:</strong>
+                    <strong class="section-label">LoRAs</strong>
                     <div class="loras-container" id="lightbox-loras"></div>
                 </div>
                 <div class="lightbox-prompts">
                     <div class="lightbox-prompt-section">
-                        <strong>Prompt:</strong>
+                        <strong class="section-label">Prompt <span class="copy-hint">click to copy</span></strong>
                         <p id="lightbox-prompt" class="clickable-prompt" onclick="copyPositivePrompt()" title="Click to copy positive prompt"></p>
                     </div>
                     <div class="lightbox-prompt-section" id="lightbox-neg-section">
-                        <strong>Negative Prompt:</strong>
-                        <p id="lightbox-neg-prompt" class="clickable-prompt" onclick="copyNegativePrompt()" title="Click to copy negative prompt"></p>
+                        <strong class="section-label">Negative <span class="copy-hint">click to copy</span></strong>
+                        <p id="lightbox-neg-prompt" class="clickable-prompt is-negative" onclick="copyNegativePrompt()" title="Click to copy negative prompt"></p>
                     </div>
                 </div>
                 <div class="lightbox-actions">
                     <div class="prompt-generation-controls">
                         <button id="generate-prompt-btn" class="generate-prompt-btn" type="button" onclick="togglePromptGenerationForm()" aria-expanded="false" aria-controls="prompt-remix-form">
+                            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 2.6a1 1 0 0 1 1.9 0l1.2 3.6a3 3 0 0 0 1.9 1.9l3.6 1.2a1 1 0 0 1 0 1.9L16 12.4a3 3 0 0 0-1.9 1.9l-1.2 3.6a1 1 0 0 1-1.9 0l-1.2-3.6a3 3 0 0 0-1.9-1.9l-3.6-1.2a1 1 0 0 1 0-1.9L8 8.1A3 3 0 0 0 9.9 6.2L11 2.6ZM19 15.5a.6.6 0 0 1 1.1 0l.4 1.2a1.6 1.6 0 0 0 1 1l1.1.4a.6.6 0 0 1 0 1.1l-1.1.4a1.6 1.6 0 0 0-1 1l-.4 1.1a.6.6 0 0 1-1.1 0l-.4-1.1a1.6 1.6 0 0 0-1-1l-1.2-.4a.6.6 0 0 1 0-1.1l1.2-.4a1.6 1.6 0 0 0 1-1l.4-1.2Z"/></svg>
                             <span id="generate-prompt-text">Gen prompt</span>
                             <span class="prompt-loader" aria-hidden="true"></span>
                         </button>
@@ -139,20 +163,22 @@
                         </form>
                         <p id="prompt-generation-status" class="prompt-generation-status" aria-live="polite"></p>
                     </div>
-                    <button id="category-toggle-btn" class="category-toggle-btn" onclick="toggleImageCategory()" title="Move to other category">
+                    <button id="category-toggle-btn" class="category-toggle-btn action-btn" onclick="toggleImageCategory()" title="Move to other category">
+                        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.3 2.3a1 1 0 0 1 1.4 0l18 18a1 1 0 0 1-1.4 1.4l-3.3-3.3A10.6 10.6 0 0 1 12 19.5c-5 0-8.6-3.4-10.2-6.9a1.5 1.5 0 0 1 0-1.2 13 13 0 0 1 3.4-4.6L2.3 3.7a1 1 0 0 1 0-1.4Zm4.3 5.7a11 11 0 0 0-2.9 4 8.9 8.9 0 0 0 11.5 5.1l-1.6-1.6a4 4 0 0 1-5.1-5.1L6.6 8Zm5.4-3.5c5 0 8.6 3.4 10.2 6.9.2.4.2.8 0 1.2a13 13 0 0 1-2.4 3.6l-1.4-1.4a11 11 0 0 0 1.9-2.8A8.9 8.9 0 0 0 9.9 6.7L8.3 5.1A10.6 10.6 0 0 1 12 4.5Z"/></svg>
                         <span id="category-toggle-text">hide</span>
                     </button>
-                    <button id="delete-image-btn" class="delete-image-btn" type="button" onclick="deleteCurrentImage()" title="Delete image">
+                    <button id="delete-image-btn" class="delete-image-btn action-btn" type="button" onclick="deleteCurrentImage()" title="Delete image">
+                        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 2h6a1 1 0 0 1 1 1v1h4a1 1 0 1 1 0 2h-1l-.9 13.1A3 3 0 0 1 15.1 22H8.9a3 3 0 0 1-3-2.9L5 6H4a1 1 0 0 1 0-2h4V3a1 1 0 0 1 1-1Zm-2 4 .9 13a1 1 0 0 0 1 .9h6.2a1 1 0 0 0 1-.9L17 6H7Zm3 3a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1Zm4 0a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1Z"/></svg>
                         <span id="delete-image-text">delete</span>
                     </button>
-                    <button id="civitai-upload-btn" class="civitai-upload-btn" type="button" onclick="sendToCivitai()" title="Upload to Civitai as draft post">
+                    <button id="civitai-upload-btn" class="civitai-upload-btn action-btn" type="button" onclick="sendToCivitai()" title="Upload to Civitai as draft post">
+                        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3a1 1 0 0 1 .7.3l4.5 4.5a1 1 0 0 1-1.4 1.4L13 6.4V15a1 1 0 1 1-2 0V6.4L8.2 9.2a1 1 0 0 1-1.4-1.4l4.5-4.5A1 1 0 0 1 12 3ZM4 14a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3a1 1 0 1 1 2 0v3a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-3a1 1 0 0 1 1-1Z"/></svg>
                         <span id="civitai-upload-text">civitai</span>
                     </button>
-                    <a id="civitai-post-link" class="civitai-post-link" href="#" target="_blank" rel="noopener" hidden>civitai ↗</a>
+                    <a id="civitai-post-link" class="civitai-post-link" href="#" target="_blank" rel="noopener" hidden>Open draft on Civitai ↗</a>
                 </div>
                 <p id="civitai-upload-status" class="civitai-upload-status" aria-live="polite" hidden></p>
-                </div>
-            </div>
+            </aside>
         </div>
     </div>
 
@@ -460,9 +486,9 @@
         if (countElement && typeof window.totalCount !== 'undefined') {
             const nouns = { image: 'images', video: 'videos' };
             const noun = nouns[window.currentMediaFilter] || 'items';
-            let countText = `(${window.totalCount} ${noun})`;
+            let countText = `${window.totalCount.toLocaleString('en-US')} ${noun}`;
             if (window.currentSearch && window.currentSearch.trim() !== '') {
-                countText = `(${window.totalCount} results)`;
+                countText = `${window.totalCount.toLocaleString('en-US')} results`;
             }
             countElement.textContent = countText;
         }
@@ -476,6 +502,40 @@
             filterButtons.classList.toggle('visible');
         }
     });
+
+    // The header slides away while scrolling down through the grid and comes
+    // back on the first scroll up, so the images get the whole viewport.
+    (function() {
+        const header = document.getElementById('site-header');
+        const REVEAL_ZONE = 120;
+        const THRESHOLD = 6;
+        let lastY = window.scrollY;
+        let ticking = false;
+
+        function update() {
+            ticking = false;
+            const y = window.scrollY;
+            const delta = y - lastY;
+            if (Math.abs(delta) < THRESHOLD) return;
+
+            const searching = header.contains(document.activeElement) &&
+                document.activeElement.matches('input, select');
+            header.classList.toggle('is-hidden', delta > 0 && y > REVEAL_ZONE && !searching);
+            header.classList.toggle('is-scrolled', y > 8);
+            lastY = y;
+        }
+
+        window.addEventListener('scroll', function() {
+            if (!ticking) {
+                ticking = true;
+                requestAnimationFrame(update);
+            }
+        }, { passive: true });
+
+        header.addEventListener('focusin', function() {
+            header.classList.remove('is-hidden');
+        });
+    })();
 
     // Update hidden NSFW field before each search request
     document.addEventListener('htmx:configRequest', function(event) {
@@ -680,28 +740,18 @@
     };
 
     window.populateLightboxMetadata = function(model, steps, cfg, sampler, scheduler, seed, prompt, negPrompt, loras) {
-        // Clean model name - remove .safetensors extension
-        let cleanModel = model || 'Unknown Model';
-        if (cleanModel.endsWith('.safetensors')) {
-            cleanModel = cleanModel.slice(0, -12); // Remove ".safetensors"
-        }
+        // The display string is "name - version", with an empty version for
+        // local checkpoints and hosted generators ("name - " or even " - ").
+        const modelParts = (model || '').split(' - ');
+        let modelName = modelParts[0].trim().replace(/\.safetensors$/, '');
+        const versionName = modelParts.slice(1).join(' - ').trim(); // In case there are multiple " - " in the name
+        if (modelName === '') modelName = 'Unknown Model';
 
-        // Split model name and version if they're combined with " - "
         const modelElement = document.getElementById('lightbox-model');
         const versionElement = document.getElementById('lightbox-version');
-
-        if (cleanModel.includes(' - ')) {
-            const parts = cleanModel.split(' - ');
-            const modelName = parts[0];
-            const versionName = parts.slice(1).join(' - '); // In case there are multiple " - " in the name
-
-            modelElement.textContent = modelName;
-            versionElement.textContent = versionName;
-            versionElement.style.display = 'block';
-        } else {
-            modelElement.textContent = cleanModel;
-            versionElement.style.display = 'none';
-        }
+        modelElement.textContent = modelName;
+        versionElement.textContent = versionName;
+        versionElement.hidden = versionName === '';
         // Reset the Civitai upload affordances for the newly shown media.
         // The button only applies to videos; the text lives in a span so the
         // upload handler can rewrite it without touching the button node.
@@ -727,22 +777,18 @@
 
         modelElement.title = model || 'Unknown Model'; // Show full name on hover
 
-        // Parameters
-        document.getElementById('lightbox-steps').textContent = steps ? `Steps: ${steps}` : '';
-        document.getElementById('lightbox-cfg').textContent = cfg ? `CFG: ${cfg}` : '';
-        document.getElementById('lightbox-sampler').textContent = sampler ? `Sampler: ${sampler}` : '';
-
-        // Scheduler - hide if empty
-        const schedulerElement = document.getElementById('lightbox-scheduler');
-        if (scheduler && scheduler.trim()) {
-            schedulerElement.textContent = `Scheduler: ${scheduler}`;
-            schedulerElement.style.display = '';
-        } else {
-            schedulerElement.style.display = 'none';
-        }
-
-        // Seed
-        document.getElementById('lightbox-seed').textContent = seed ? `Seed: ${seed}` : 'Seed: N/A';
+        // Parameters: each value sits in a labelled row that hides when empty
+        const setParam = function(id, value) {
+            const element = document.getElementById(id);
+            const text = value ? String(value).trim() : '';
+            element.textContent = text;
+            element.closest('.param').hidden = text === '';
+        };
+        setParam('lightbox-steps', steps);
+        setParam('lightbox-cfg', cfg);
+        setParam('lightbox-sampler', sampler);
+        setParam('lightbox-scheduler', scheduler);
+        setParam('lightbox-seed', seed);
 
         // LoRAs
         const lorasSection = document.getElementById('lightbox-loras-section');
@@ -893,13 +939,13 @@
         const element = document.getElementById(elementId);
         if (!element) return;
 
-        const originalBg = element.style.backgroundColor;
-        element.style.backgroundColor = '#28a745';
-        element.style.color = 'white';
-
+        // The seed value sits inside its labelled row; flash the whole row
+        const target = element.closest('.param') || element;
+        target.classList.remove('is-copied');
+        void target.offsetWidth; // restart the animation on repeated copies
+        target.classList.add('is-copied');
         setTimeout(function() {
-            element.style.backgroundColor = originalBg;
-            element.style.color = '';
+            target.classList.remove('is-copied');
         }, 1000);
     }
 
@@ -1393,14 +1439,19 @@
     };
 
     window.updateArrowVisibility = function() {
-        const prevBtn = document.querySelector('.lightbox-prev');
-        const nextBtn = document.querySelector('.lightbox-next');
+        const index = window.currentLightboxIndex;
+        document.querySelector('.lightbox-prev').disabled = index <= 0;
+        document.querySelector('.lightbox-next').disabled = index >= window.lightboxImages.length - 1;
 
-        prevBtn.style.opacity = window.currentLightboxIndex > 0 ? '1' : '0.3';
-        nextBtn.style.opacity = window.currentLightboxIndex < window.lightboxImages.length - 1 ? '1' : '0.3';
-
-        prevBtn.style.cursor = window.currentLightboxIndex > 0 ? 'pointer' : 'default';
-        nextBtn.style.cursor = window.currentLightboxIndex < window.lightboxImages.length - 1 ? 'pointer' : 'default';
+        // Position within the whole result set; the grid order is the same
+        const counter = document.getElementById('lightbox-counter');
+        const total = Math.max(window.totalCount || 0, window.lightboxImages.length);
+        const meta = window.lightboxMetadata[index];
+        let label = `${(index + 1).toLocaleString('en-US')} / ${total.toLocaleString('en-US')}`;
+        if (meta && meta.mediaType === 'video') {
+            label += meta.duration ? ` · video ${meta.duration}` : ' · video';
+        }
+        counter.textContent = label;
     };
 
     // Close lightbox on click outside content
@@ -1556,8 +1607,11 @@
     window.MasonryManager = (function() {
         let masonryInstance = null;
         let mainGrid = null;
-        const GUTTER = 15;
-        const MIN_COLUMN_WIDTH = 250;
+        const GUTTER = 10;
+        const MIN_COLUMN_WIDTH = 280;
+        // Phones still get two columns rather than one full-width stack
+        const MIN_COLUMN_WIDTH_NARROW = 150;
+        const NARROW_BREAKPOINT = 640;
         let globalResizeTimeout;
         let resizeObserver;
         let resizeListenerAttached = false;
@@ -1576,7 +1630,8 @@
         // Calculate optimal column width based on container width
         function calculateColumnWidth(containerWidth) {
             const availableWidth = containerWidth;
-            const columns = Math.max(1, Math.floor((availableWidth + GUTTER) / (MIN_COLUMN_WIDTH + GUTTER)));
+            const minWidth = availableWidth < NARROW_BREAKPOINT ? MIN_COLUMN_WIDTH_NARROW : MIN_COLUMN_WIDTH;
+            const columns = Math.max(1, Math.floor((availableWidth + GUTTER) / (minWidth + GUTTER)));
             const columnWidth = Math.floor((availableWidth - (GUTTER * (columns - 1))) / columns);
             return { columnWidth, columns };
         }

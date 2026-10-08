@@ -122,6 +122,18 @@ func (img ImageMetadata) DurationLabel() string {
 	return fmt.Sprintf("%d:%02d", total/60, total%60)
 }
 
+// ModelLabel is the model name as shown on a grid card: the stored display
+// string joins name and version with " - " even when the version is empty,
+// and checkpoints found in local workflows keep their file extension.
+func (img ImageMetadata) ModelLabel() string {
+	label := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(img.Model), " -"))
+	label = strings.TrimSpace(strings.TrimSuffix(label, ".safetensors"))
+	if label == "" || label == "-" || label == "Unknown Model" {
+		return ""
+	}
+	return label
+}
+
 type ModelStat struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`

@@ -46,6 +46,9 @@ mise run dev
 
 `mise run dev` installs the declared Go, Air, and 1Password CLI versions when needed, downloads and verifies the Go modules, injects `XAI_API_KEY` and `CIVITAI_TOKEN` for the child process with `op run`, then starts Air. The resolved secret values are never written to the project.
 
+Air watches Go and HTML files. CSS changes in `static/styles.css` are served
+directly and only need a browser refresh; they do not restart the server.
+
 The local `.env.op` should contain references matching your vault and item names:
 
 ```dotenv
@@ -76,10 +79,11 @@ Non-secret import settings such as `CIVITAI_USERNAME` and `AUTO_IMPORT_ON_STARTU
 - Place your AI-generated images in the `images/` directory
 - NSFW images can be placed in `images_nsfw/` directory
 - Start the application and navigate to `http://localhost:8081`
-- Use the search bar to find images by prompt content
-- Filter by model or NSFW status. The NSFW filter is hidden behind a shortcut, CTRL+d.
-- Click images to view full size with metadata
-- From the image viewer, click **Gen prompt**, choose the Anima or Krea 2 output format, select Describe/Remix/Next/Before, and optionally steer the result before generating it
+- Search by prompt or choose a model; use the image/video buttons to narrow the masonry grid
+- Scroll down to hide the toolbar and scroll up to bring it back
+- Press Ctrl+D to show the All/SFW/NSFW filter
+- Click a card to open the full-size media and its metadata; use the arrows or arrow keys to browse
+- Click a prompt or seed to copy it, or click **Gen prompt** to create an Anima or Krea 2 prompt from Describe/Remix/Next/Before with optional steering
 
 ### Prompt generation
 
