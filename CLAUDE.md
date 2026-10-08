@@ -160,6 +160,10 @@ HTTP server with SQLite backend:
 - **Metadata Extraction**: Captures generation parameters, statistics, and user data
 - **Smart Image Downloads**: Downloads images with ID-based naming and skip logic for resuming
 
+## Animated WebP Support
+
+- Civitai serves some animated WebP clips under an image URL, so they land in the image libraries with a `.jpeg`/`.png` name. Go's `golang.org/x/image/webp` decoder only reads still images, so `webp.go` detects the RIFF/WebP magic bytes and, when the full decode fails, extracts the first frame with `webpmux -get frame 1` (external binary from the `webp` package) for dimensions and thumbnails. The original file is served untouched: browsers play the animation in the grid and lightbox. Without `webpmux` installed, animated WebP files fail indexing with an explicit error instead of breaking the import.
+
 ## Video Support
 
 - **Libraries**: Videos live in `videos/` and `videos_nsfw/`. On startup, any video found in the image libraries is moved across; one whose payload is a video but whose extension says otherwise (Civitai serves some clips from `.jpg` URLs) is renamed to match its container, because the browser refuses to play a video served as `image/jpeg`. Duplicate downloads go to `temp/` for review rather than being deleted.

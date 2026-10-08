@@ -15,6 +15,7 @@ import (
 
 	"github.com/nfnt/resize"
 	"github.com/rwcarlsen/goexif/exif"
+	_ "golang.org/x/image/webp" // decode WebP (Civitai serves some images as WebP under a .jpeg URL)
 )
 
 // mediaExtensions lists the image containers we index. Videos are matched
@@ -201,8 +202,20 @@ func (app *App) extractImageMetadata(imagePath string, isNSFW bool) (*ImageMetad
 
 	// Get image dimensions
 	img, _, err := image.DecodeConfig(file)
+	var animatedStill image.Image
 	if err != nil {
-		return nil, err
+		if !isWebPMagic(fileMagicBytes) {
+			return nil, err
+		}
+		// Animated WebP: Go's decoder only reads still frames, so fall back
+		// to the first frame for dimensions and the thumbnail.
+		stillImg, stillErr := decodeAnimatedWebPFirstFrame(imagePath)
+		if stillErr != nil {
+			return nil, stillErr
+		}
+		bounds := stillImg.Bounds()
+		img = image.Config{Width: bounds.Dx(), Height: bounds.Dy()}
+		animatedStill = stillImg
 	}
 
 	metadata := &ImageMetadata{
@@ -276,7 +289,12 @@ func (app *App) extractImageMetadata(imagePath string, isNSFW bool) (*ImageMetad
 	app.resolveMediaModel(metadata)
 
 	// Create thumbnail
-	thumbnailPath, err := app.createThumbnail(imagePath, filename)
+	var thumbnailPath string
+	if animatedStill != nil {
+		thumbnailPath, err = app.writeThumbnail(animatedStill, "webp", thumbnailPathFor(filename))
+	} else {
+		thumbnailPath, err = app.createThumbnail(imagePath, filename)
+	}
 	if err != nil {
 		log.Printf("Error creating thumbnail for %s: %v", filename, err)
 	} else {
@@ -546,19 +564,23 @@ func (app *App) createThumbnail(imagePath, filename string) (string, error) {
 		return thumbnailPath, nil
 	}
 
-	// Open original image
-	file, err := os.Open(imagePath)
-	if err != nil {
-		return "", err
+	// Decode image, falling back to the first frame for animated WebP files.
+	header := make([]byte, 12)
+	if file, err := os.Open(imagePath); err == nil {
+		file.Read(header)
+		file.Close()
 	}
-	defer file.Close()
-
-	// Decode image
-	img, format, err := image.Decode(file)
+	img, format, err := decodeImageWithAnimatedWebPFallback(imagePath, header)
 	if err != nil {
 		return "", err
 	}
 
+	return app.writeThumbnail(img, format, thumbnailPath)
+}
+
+// writeThumbnail resizes a decoded image into the 400x600 thumbnail envelope
+// and encodes it, keeping PNG thumbnails for PNG sources and JPEG otherwise.
+func (app *App) writeThumbnail(img image.Image, format, thumbnailPath string) (string, error) {
 	// Create thumbnail (400x600 max, maintain aspect ratio)
 	// Higher resolution for masonry layout
 	thumbnail := resize.Thumbnail(400, 600, img, resize.Lanczos3)
