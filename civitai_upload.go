@@ -281,7 +281,7 @@ func (app *App) handleCivitaiUpload(w http.ResponseWriter, r *http.Request) {
 				OK:      true,
 				Already: true,
 				PostID:  row.CivitaiPostID.Int64,
-				PostURL: fmt.Sprintf("%s/posts/%d", civitaiWebURL, row.CivitaiPostID.Int64),
+				PostURL: fmt.Sprintf("%s/posts/%d/edit", civitaiWebURL, row.CivitaiPostID.Int64),
 			})
 			return
 		}
@@ -347,7 +347,7 @@ func (app *App) handleCivitaiUpload(w http.ResponseWriter, r *http.Request) {
 		OK:      true,
 		PostID:  row.CivitaiPostID.Int64,
 		ImageID: row.CivitaiImageID.Int64,
-		PostURL: fmt.Sprintf("%s/posts/%d", civitaiWebURL, row.CivitaiPostID.Int64),
+		PostURL: fmt.Sprintf("%s/posts/%d/edit", civitaiWebURL, row.CivitaiPostID.Int64),
 	})
 }
 
